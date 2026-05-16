@@ -297,10 +297,7 @@ def _render_page(
     .filter-bar a {{
       text-decoration: none;
     }}
-    .filter-chip {{
-      text-decoration: none;
-      transition: filter 120ms ease;
-    }}
+    .filter-chip {{ transition: filter 120ms ease; }}
     .filter-chip:hover {{
       filter: brightness(0.97);
     }}
@@ -350,6 +347,10 @@ def _render_page(
     .results-table th:nth-child(5), .results-table td:nth-child(5) {{ width: 110px; }}
     .results-table th:nth-child(6), .results-table td:nth-child(6) {{ width: 28%; }}
     .results-table th:nth-child(7), .results-table td:nth-child(7) {{ width: 16%; }}
+    .results-table td:nth-child(6) {{
+      min-width: 0;
+      overflow: hidden;
+    }}
     th, td {{
       text-align: left;
       padding: 12px 8px;
@@ -394,6 +395,7 @@ def _render_page(
       display: flex;
       flex-wrap: wrap;
       gap: 6px;
+      max-width: 100%;
       min-width: 0;
     }}
     .provider-chip {{
@@ -403,9 +405,19 @@ def _render_page(
       display: inline-block;
       font-size: 13px;
       font-weight: 700;
+      line-height: 1.2;
       max-width: 100%;
       overflow-wrap: anywhere;
       padding: 4px 8px;
+      white-space: normal;
+      word-break: break-word;
+    }}
+    .providers .provider-chip {{
+      flex: 0 1 auto;
+      min-width: 0;
+    }}
+    .filter-chip {{
+      white-space: nowrap;
     }}
     .provider-netflix {{ background: #fee2e2; border-color: #fecaca; color: #b91c1c; }}
     .provider-disney {{ background: #dbeafe; border-color: #bfdbfe; color: #1d4ed8; }}
@@ -613,7 +625,7 @@ def _results_table(result: ScanRunResult | None, active_provider: str | None = N
                 f'<td class="title-cell">{escape(item.title)}</td>'
                 f"<td>{_change_status_badge(item.change_status)}</td>"
                 f'<td><span class="status {escape(item.status)}">{escape(item.status)}</span></td>'
-                f"<td>{providers}</td>"
+                f'<td class="provider-cell">{providers}</td>'
                 f'<td class="message-cell">{escape(message)}</td>'
                 "</tr>"
             )

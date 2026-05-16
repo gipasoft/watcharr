@@ -15,6 +15,7 @@ from streaming_checker.web.app import (
     _provider_filter_bar,
     _providers_display,
     _resolve_provider_filter,
+    _render_page,
     _results_table,
     _sorted_statistics,
 )
@@ -58,7 +59,22 @@ class ScanResultsUiTest(unittest.TestCase):
 
         self.assertIn("table-scroll", html)
         self.assertIn("results-table", html)
+        self.assertIn("provider-cell", html)
         self.assertIn("message-cell", html)
+
+    def test_page_css_allows_long_provider_chips_to_wrap(self):
+        html = _render_page(
+            settings=None,
+            config_error=None,
+            scan_error=None,
+            result=_sample_result(),
+            scheduler_status=None,
+            active_provider=None,
+        )
+
+        self.assertIn("word-break: break-word", html)
+        self.assertIn("white-space: normal", html)
+        self.assertIn(".providers .provider-chip", html)
 
     def test_provider_filter_bar_uses_counts_and_htmx_attrs(self):
         result = _sample_result()
