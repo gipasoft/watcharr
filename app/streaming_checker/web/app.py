@@ -4,9 +4,9 @@ from dataclasses import asdict
 from datetime import datetime
 from html import escape
 from threading import Lock
-from urllib.parse import urlsplit, urlunsplit
+from urllib.parse import quote, urlsplit, urlunsplit
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 
 from streaming_checker.core.config import Settings, load_settings
@@ -85,13 +85,19 @@ def _configuration_summary(settings: Settings | None) -> dict[str, str | bool | 
 
 
 @app.get("/", response_class=HTMLResponse)
-def home():
+def home(request: Request, provider: str | None = None):
     settings, config_error = _load_settings_for_page()
 
     with _state_lock:
         result = _last_result
         scan_error = _last_error
     scheduler_status = _scheduler_status()
+
+    active_provider = _resolve_provider_filter(result, provider)
+    results_section = _results_section(result, active_provider)
+
+    if request.headers.get("HX-Request"):
+        return HTMLResponse(results_section)
 
     return HTMLResponse(
         _render_page(
@@ -100,6 +106,7 @@ def home():
             scan_error=scan_error,
             result=result,
             scheduler_status=scheduler_status,
+            active_provider=active_provider,
         )
     )
 
@@ -176,6 +183,7 @@ def _render_page(
     scan_error: str | None,
     result: ScanRunResult | None,
     scheduler_status: SchedulerStatus | None,
+    active_provider: str | None,
 ) -> str:
     summary = _configuration_summary(settings)
     disabled = "disabled" if config_error else ""
@@ -186,6 +194,7 @@ def _render_page(
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>streaming-checker</title>
+  <script src="https://unpkg.com/htmx.org@2.0.4" defer></script>
   <style>
     :root {{
       color-scheme: light;
@@ -278,6 +287,29 @@ def _render_page(
       overflow: hidden;
       text-overflow: ellipsis;
       white-space: nowrap;
+    }}
+    .filter-bar {{
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-bottom: 14px;
+    }}
+    .filter-bar a {{
+      text-decoration: none;
+    }}
+    .filter-chip {{
+      text-decoration: none;
+      transition: filter 120ms ease;
+    }}
+    .filter-chip:hover {{
+      filter: brightness(0.97);
+    }}
+    .filter-chip.active {{
+      box-shadow: 0 0 0 2px var(--accent);
+    }}
+    .filter-count {{
+      font-weight: 800;
+      margin-left: 4px;
     }}
     .layout {{
       display: grid;
@@ -443,7 +475,7 @@ def _render_page(
     <section class="layout">
       <div class="panel">
         <h2>Ultimi risultati</h2>
-        {_results_table(result)}
+        {_results_section(result, active_provider)}
       </div>
       <aside>
         <div class="panel">
@@ -517,7 +549,38 @@ def _scheduler_panel(status: SchedulerStatus | None) -> str:
     return f'<section class="panel scheduler-card"><h2>Scheduler</h2><div class="scheduler-strip">{rendered}</div></section>'
 
 
-def _results_table(result: ScanRunResult | None) -> str:
+def _results_section(result: ScanRunResult | None, active_provider: str | None) -> str:
+    return (
+        '<div id="results-section">'
+        + _provider_filter_bar(result, active_provider)
+        + _results_table(result, active_provider)
+        + "</div>"
+    )
+
+
+def _provider_filter_bar(result: ScanRunResult | None, active_provider: str | None) -> str:
+    if result is None or not result.provider_statistics:
+        return ""
+
+    chips = [_filter_chip("All", None, result.processed_count, active_provider is None)]
+    chips.extend(
+        _filter_chip(provider, provider, count, provider == active_provider)
+        for provider, count in _sorted_statistics(result.provider_statistics)
+    )
+    return '<nav class="filter-bar" aria-label="Provider filters">' + "".join(chips) + "</nav>"
+
+
+def _filter_chip(label: str, provider: str | None, count: int, active: bool) -> str:
+    href = "/" if provider is None else f"/?provider={quote(provider)}"
+    active_class = " active" if active else ""
+    chip = _provider_badge(label, extra_class=f"filter-chip{active_class}", count=count)
+    return (
+        f'<a href="{href}" hx-get="{href}" hx-target="#results-section" '
+        f'hx-push-url="true">{chip}</a>'
+    )
+
+
+def _results_table(result: ScanRunResult | None, active_provider: str | None = None) -> str:
     if result is None:
         return '<p class="empty">Nessuna scansione eseguita in questa sessione.</p>'
 
@@ -538,6 +601,9 @@ def _results_table(result: ScanRunResult | None) -> str:
             continue
 
         for item in arr_result.items:
+            if not _item_matches_provider(item.providers, active_provider):
+                continue
+
             providers = _providers_display(item.providers, item.original_provider_names)
             message = item.message or "-"
             rows.append(
@@ -551,6 +617,10 @@ def _results_table(result: ScanRunResult | None) -> str:
                 f'<td class="message-cell">{escape(message)}</td>'
                 "</tr>"
             )
+
+    if not rows:
+        provider_text = escape(active_provider) if active_provider else "questo filtro"
+        return f'<p class="empty">Nessun risultato per {provider_text}.</p>'
 
     return (
         '<div class="table-scroll"><table class="results-table"><thead><tr><th>Servizio</th><th>Tipo</th><th>Titolo</th><th>Cambio</th><th>Stato</th>'
@@ -621,13 +691,34 @@ def _provider_statistics(result: ScanRunResult | None) -> str:
     return '<table class="stats-table"><tbody>' + provider_rows + "</tbody></table>" + categories
 
 
-def _provider_badge(provider: str) -> str:
+def _provider_badge(provider: str, *, extra_class: str = "", count: int | None = None) -> str:
     provider_class = PROVIDER_BADGE_COLORS.get(provider, "default")
-    return f'<span class="provider-chip provider-{escape(provider_class)}">{escape(provider)}</span>'
+    count_html = f'<span class="filter-count">({count})</span>' if count is not None else ""
+    classes = f"provider-chip provider-{escape(provider_class)}"
+    if extra_class:
+        classes = f"{classes} {escape(extra_class)}"
+    return f'<span class="{classes}">{escape(provider)}{count_html}</span>'
 
 
 def _sorted_statistics(statistics: dict[str, int]) -> list[tuple[str, int]]:
     return sorted(statistics.items(), key=lambda item: (-item[1], item[0].casefold()))
+
+
+def _resolve_provider_filter(result: ScanRunResult | None, provider: str | None) -> str | None:
+    if not result or not provider:
+        return None
+
+    requested = provider.strip().casefold()
+    for canonical_provider in result.provider_statistics:
+        if canonical_provider.casefold() == requested:
+            return canonical_provider
+    return None
+
+
+def _item_matches_provider(providers: list[str], active_provider: str | None) -> bool:
+    if active_provider is None:
+        return True
+    return active_provider in providers
 
 
 def _last_scan_text(result: ScanRunResult | None) -> str:
