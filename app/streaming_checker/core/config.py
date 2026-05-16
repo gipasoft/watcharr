@@ -1,5 +1,6 @@
 import os
 from dataclasses import dataclass
+from pathlib import Path
 
 
 def _bool(name: str, default: bool = False) -> bool:
@@ -12,6 +13,12 @@ def _bool(name: str, default: bool = False) -> bool:
 def _csv(name: str, default: str = "") -> list[str]:
     value = os.getenv(name, default)
     return [x.strip() for x in value.split(",") if x.strip()]
+
+
+def default_database_path() -> str:
+    if Path("/data").is_dir():
+        return "/data/streaming_checker.sqlite"
+    return "data/streaming_checker.sqlite"
 
 
 @dataclass(frozen=True)
@@ -34,12 +41,14 @@ class Settings:
 
     provider_allowlist: list[str]
     offer_types: list[str]
+    database_path: str
 
 
 def load_settings() -> Settings:
     token = os.getenv("TMDB_BEARER_TOKEN", "").strip()
     if not token:
         raise RuntimeError("TMDB_BEARER_TOKEN mancante")
+    database_path = os.getenv("DATABASE_PATH", default_database_path()).strip() or default_database_path()
 
     return Settings(
         radarr_url=os.getenv("RADARR_URL", "").rstrip("/") or None,
@@ -57,5 +66,6 @@ def load_settings() -> Settings:
         tag_prefix=os.getenv("TAG_PREFIX", "streaming-").strip(),
         provider_allowlist=_csv("PROVIDER_ALLOWLIST"),
         offer_types=_csv("OFFER_TYPES", "flatrate,free,ads"),
+        database_path=database_path,
     )
 

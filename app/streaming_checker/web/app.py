@@ -10,12 +10,23 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 
 from streaming_checker.core.config import Settings, load_settings
 from streaming_checker.services.runner import ScanRunResult, ScanRunner
+from streaming_checker.storage import initialize_storage_from_environment
 
 app = FastAPI(title="streaming-checker")
 
 _state_lock = Lock()
 _last_result: ScanRunResult | None = None
 _last_error: str | None = None
+
+
+@app.on_event("startup")
+def initialize_storage():
+    global _last_error
+
+    try:
+        initialize_storage_from_environment()
+    except Exception as exc:
+        _last_error = str(exc)
 
 
 def _load_settings_for_page() -> tuple[Settings | None, str | None]:
@@ -40,6 +51,7 @@ def _configuration_summary(settings: Settings | None) -> dict[str, str | bool | 
         "tag_prefix": settings.tag_prefix,
         "provider_allowlist": settings.provider_allowlist,
         "offer_types": settings.offer_types,
+        "database_path": settings.database_path,
         "radarr_enabled": bool(settings.radarr_url and settings.radarr_api_key),
         "radarr_url": _safe_url(settings.radarr_url),
         "radarr_api_key_configured": bool(settings.radarr_api_key),
@@ -168,7 +180,7 @@ def _render_page(
     button:disabled {{ opacity: 0.5; cursor: not-allowed; }}
     .grid {{
       display: grid;
-      grid-template-columns: repeat(4, minmax(0, 1fr));
+      grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
       gap: 14px;
       margin-bottom: 18px;
     }}
@@ -291,6 +303,8 @@ def _dashboard(result: ScanRunResult | None) -> str:
         ("Processati", result.processed_count if result else 0),
         ("Saltati", result.skipped_count if result else 0),
         ("Errori", result.error_count if result else 0),
+        ("Cambi provider", result.changed_count if result else 0),
+        ("Notifiche", result.notification_count if result else 0),
     ]
     cards = "".join(
         f'<div class="panel metric"><span class="value">{value}</span><span class="label">{label}</span></div>'

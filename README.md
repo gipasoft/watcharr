@@ -13,6 +13,7 @@ Piccolo container Python per controllare se film/serie mancanti in Radarr/Sonarr
   - `streaming-prime-video`
   - `streaming-disney-plus`
 - Rimuove i tag gestiti quando il contenuto non risulta più disponibile, se `REMOVE_STALE_TAGS=true`.
+- Salva cronologia scansioni, cache disponibilità e storico notifiche in SQLite.
 - Di default è in `DRY_RUN=true`, quindi non modifica nulla.
 
 ## Requisiti
@@ -60,7 +61,18 @@ REMOVE_STALE_TAGS=true
 TAG_GENERIC=true
 TAG_PROVIDERS=true
 GENERIC_TAG=available-streaming
+DATABASE_PATH=/data/streaming_checker.sqlite
 ```
+
+## Persistenza SQLite
+
+All'avvio vengono create automaticamente le tabelle SQLite, se mancanti:
+
+- `availability_cache`
+- `notification_history`
+- `scan_history`
+
+La cache confronta i provider dell'ultima scansione con quelli già noti per ogni contenuto e registra una voce di storico solo per stati non già notificati.
 
 ## Note
 

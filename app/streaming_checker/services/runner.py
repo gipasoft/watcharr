@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from time import perf_counter
 from typing import Callable
@@ -10,6 +10,7 @@ from streaming_checker.clients.tmdb_client import TmdbClient
 from streaming_checker.core.config import Settings
 from streaming_checker.services.scanning import ScanningService
 from streaming_checker.services.tagging import TaggingService
+from streaming_checker.storage.sqlite import SQLiteStorage
 
 
 @dataclass(frozen=True)
@@ -18,6 +19,11 @@ class ScanItemResult:
     title: str
     status: str
     providers: list[str] = field(default_factory=list)
+    previous_providers: list[str] = field(default_factory=list)
+    added_providers: list[str] = field(default_factory=list)
+    removed_providers: list[str] = field(default_factory=list)
+    providers_changed: bool = False
+    notification_created: bool = False
     message: str | None = None
 
 
@@ -41,6 +47,14 @@ class ArrScanResult:
     def error_count(self) -> int:
         return sum(1 for item in self.items if item.status == "error")
 
+    @property
+    def changed_count(self) -> int:
+        return sum(1 for item in self.items if item.providers_changed)
+
+    @property
+    def notification_count(self) -> int:
+        return sum(1 for item in self.items if item.notification_created)
+
 
 @dataclass(frozen=True)
 class ScanRunResult:
@@ -51,6 +65,7 @@ class ScanRunResult:
     dry_run: bool
     offer_types: list[str]
     arr_results: list[ArrScanResult]
+    scan_history_id: int | None = None
 
     @property
     def missing_count(self) -> int:
@@ -68,6 +83,14 @@ class ScanRunResult:
     def error_count(self) -> int:
         return sum(result.error_count for result in self.arr_results)
 
+    @property
+    def changed_count(self) -> int:
+        return sum(result.changed_count for result in self.arr_results)
+
+    @property
+    def notification_count(self) -> int:
+        return sum(result.notification_count for result in self.arr_results)
+
 
 class ScanRunner:
     def __init__(
@@ -76,10 +99,12 @@ class ScanRunner:
         *,
         tmdb_factory: Callable[[str, str], TmdbClient] = TmdbClient,
         arr_client_factory: Callable[[str, str, str], ArrClient] = ArrClient,
+        storage_factory: Callable[[str], SQLiteStorage] | None = SQLiteStorage,
     ):
         self.settings = settings
         self.tmdb_factory = tmdb_factory
         self.arr_client_factory = arr_client_factory
+        self.storage = storage_factory(settings.database_path) if storage_factory else None
 
     def run(self) -> ScanRunResult:
         started_at = datetime.now(UTC)
@@ -110,7 +135,7 @@ class ScanRunner:
             arr_results.append(ArrScanResult(kind="sonarr", enabled=False, message="disabled"))
 
         finished_at = datetime.now(UTC)
-        return ScanRunResult(
+        result = ScanRunResult(
             started_at=started_at,
             finished_at=finished_at,
             duration_seconds=perf_counter() - start,
@@ -119,6 +144,8 @@ class ScanRunner:
             offer_types=list(self.settings.offer_types),
             arr_results=arr_results,
         )
+        scan_history_id = self._record_scan_history(result)
+        return replace(result, scan_history_id=scan_history_id)
 
     def process_arr(self, client: ArrClient, tmdb: TmdbClient) -> ArrScanResult:
         items = client.list_missing_monitored()
@@ -156,11 +183,19 @@ class ScanRunner:
                 )
 
             tagger.apply(client, item, providers)
+            change = self.storage.record_availability(client.kind, item, providers) if self.storage else None
+            message = self._change_message(change) if change and change.changed else None
             return ScanItemResult(
                 kind=client.kind,
                 title=item.title,
                 status="processed",
                 providers=providers,
+                previous_providers=change.previous_providers if change else [],
+                added_providers=change.added_providers if change else [],
+                removed_providers=change.removed_providers if change else [],
+                providers_changed=bool(change and change.changed),
+                notification_created=bool(change and change.notification_created),
+                message=message,
             )
         except Exception as exc:
             print(f"[{client.kind}] ERROR processing {item.title}: {exc}")
@@ -170,4 +205,30 @@ class ScanRunner:
                 status="error",
                 message=str(exc),
             )
+
+    def _record_scan_history(self, result: ScanRunResult) -> int | None:
+        if not self.storage:
+            return None
+
+        return self.storage.record_scan(
+            started_at=result.started_at,
+            finished_at=result.finished_at,
+            duration_seconds=result.duration_seconds,
+            country=result.country,
+            dry_run=result.dry_run,
+            offer_types=result.offer_types,
+            missing_count=result.missing_count,
+            processed_count=result.processed_count,
+            skipped_count=result.skipped_count,
+            error_count=result.error_count,
+        )
+
+    @staticmethod
+    def _change_message(change) -> str:
+        added = ", ".join(change.added_providers) if change.added_providers else "-"
+        removed = ", ".join(change.removed_providers) if change.removed_providers else "-"
+        message = f"providers changed; added: {added}; removed: {removed}"
+        if not change.notification_created:
+            message = f"{message}; notification already recorded"
+        return message
 

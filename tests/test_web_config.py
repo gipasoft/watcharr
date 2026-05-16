@@ -26,6 +26,7 @@ class WebConfigurationSummaryTest(unittest.TestCase):
             tag_prefix="streaming-",
             provider_allowlist=["Netflix"],
             offer_types=["flatrate"],
+            database_path="data/test.sqlite",
         )
 
         summary = _configuration_summary(settings)
