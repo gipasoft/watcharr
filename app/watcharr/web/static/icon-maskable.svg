@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="Watcharr">
+  <rect width="512" height="512" fill="#0f766e"/>
+  <rect x="86" y="126" width="340" height="246" rx="40" fill="#f8fafc"/>
+  <rect x="122" y="172" width="268" height="36" rx="18" fill="#d9dee7"/>
+  <rect x="122" y="238" width="174" height="36" rx="18" fill="#99f6e4"/>
+  <rect x="122" y="304" width="222" height="36" rx="18" fill="#dbeafe"/>
+  <circle cx="386" cy="322" r="24" fill="#0f766e"/>
+</svg>

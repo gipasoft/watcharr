@@ -1,5 +1,6 @@
 import sys
 import unittest
+import json
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "app"))
@@ -117,6 +118,31 @@ class ScanResultsUiTest(unittest.TestCase):
         self.assertIn("data-column-toggle", html)
         self.assertIn("htmx:afterSwap", html)
         self.assertIn("Test ntfy", html)
+
+    def test_page_has_pwa_metadata(self):
+        html = _render_page(
+            settings=_settings(),
+            config_error=None,
+            scan_error=None,
+            result=_sample_result(),
+            scheduler_status=None,
+            active_provider=None,
+        )
+
+        self.assertIn('rel="manifest"', html)
+        self.assertIn('href="/manifest.webmanifest"', html)
+        self.assertIn('name="theme-color"', html)
+        self.assertIn('apple-mobile-web-app-capable', html)
+        self.assertIn('serviceWorker.register("/sw.js")', html)
+
+    def test_pwa_manifest_has_install_metadata(self):
+        manifest_path = Path(__file__).resolve().parents[1] / "app" / "watcharr" / "web" / "static" / "manifest.webmanifest"
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+
+        self.assertEqual(manifest["name"], "Watcharr")
+        self.assertEqual(manifest["display"], "standalone")
+        self.assertEqual(manifest["start_url"], "/")
+        self.assertTrue(any(icon["purpose"] == "maskable" for icon in manifest["icons"]))
 
     def test_ntfy_test_notice_renders_success_and_failure(self):
         self.assertIn("Test ntfy inviato", _ntfy_test_notice((True, "sent")))

@@ -3,11 +3,13 @@ from __future__ import annotations
 from dataclasses import asdict
 from datetime import datetime
 from html import escape
+from pathlib import Path
 from threading import Lock
 from urllib.parse import quote, urlsplit, urlunsplit
 
 from fastapi import FastAPI, Request
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
+from fastapi.staticfiles import StaticFiles
 
 from watcharr.core.config import Settings, load_settings
 from watcharr.core.provider_mappings import PROVIDER_BADGE_COLORS
@@ -17,6 +19,8 @@ from watcharr.services.scheduler import ScanExecution, ScanSchedulerService, Sch
 from watcharr.storage import initialize_storage_from_environment
 
 app = FastAPI(title="Watcharr")
+STATIC_DIR = Path(__file__).resolve().parent / "static"
+app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
 _state_lock = Lock()
 _last_result: ScanRunResult | None = None
@@ -42,6 +46,20 @@ def initialize_services():
 def shutdown_services():
     if _scheduler_service:
         _scheduler_service.shutdown()
+
+
+@app.get("/manifest.webmanifest", include_in_schema=False)
+def web_manifest():
+    return FileResponse(STATIC_DIR / "manifest.webmanifest", media_type="application/manifest+json")
+
+
+@app.get("/sw.js", include_in_schema=False)
+def service_worker():
+    return FileResponse(
+        STATIC_DIR / "sw.js",
+        media_type="text/javascript",
+        headers={"Service-Worker-Allowed": "/"},
+    )
 
 
 def _load_settings_for_page() -> tuple[Settings | None, str | None]:
@@ -250,6 +268,15 @@ def _render_page(
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Watcharr</title>
+  <meta name="theme-color" content="#0f766e">
+  <meta name="application-name" content="Watcharr">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="Watcharr">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="icon" href="/static/icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="/static/icon.svg">
   <script src="https://unpkg.com/htmx.org@2.0.4" defer></script>
   <style>
     :root {{
@@ -735,6 +762,12 @@ def _render_page(
 
       document.addEventListener("DOMContentLoaded", applyColumns);
       document.body.addEventListener("htmx:afterSwap", applyColumns);
+
+      if ("serviceWorker" in navigator) {{
+        window.addEventListener("load", () => {{
+          navigator.serviceWorker.register("/sw.js").catch(() => undefined);
+        }});
+      }}
     }})();
   </script>
 </body>

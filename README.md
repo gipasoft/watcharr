@@ -16,7 +16,6 @@ Scan your Radarr/Sonarr library, track which missing titles are available on str
 ## Dashboard Preview
 
 ![Dashboard Preview](docs/images/dashboard.png)
-![Mobile Preview](docs/images/mobile.png)
 
 ---
 
@@ -29,6 +28,7 @@ Scan your Radarr/Sonarr library, track which missing titles are available on str
 - SQLite cache & history for scan diffs and notifications
 - ntfy notifications when providers change
 - Responsive web dashboard for scan results and scheduler state
+- Installable mobile web app (PWA)
 - Automatic scheduler (APScheduler) with manual scan button
 - Provider filters
 - Automatic tagging

@@ -22,3 +22,6 @@ package-dir = {"" = "app"}
 
 [tool.setuptools.packages.find]
 where = ["app"]
+
+[tool.setuptools.package-data]
+"watcharr.web" = ["static/*"]
