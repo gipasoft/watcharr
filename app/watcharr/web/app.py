@@ -450,7 +450,15 @@ def _render_page(
       padding: 4px 8px;
       white-space: nowrap;
     }}
-    .results-table .badge,
+    /* Keep badges (eg. Movie / Series) on a single line in the results table
+       while allowing status cells to wrap as needed. */
+    .results-table .badge {{
+      max-width: 100%;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      flex: 0 0 auto;
+    }}
     .results-table .status {{
       max-width: 100%;
       overflow-wrap: anywhere;
