@@ -1,52 +1,65 @@
 # Watcharr
 
-Piccolo container Python per controllare se film/serie mancanti in Radarr/Sonarr sono disponibili in streaming in Italia tramite TMDB Watch Providers, e applicare tag automatici.
+Streaming availability tracker for Radarr & Sonarr
 
-## Cosa fa
+Lightweight service that checks missing/monitored items in Radarr and Sonarr, looks up streaming availability via TMDB watch providers, and optionally tags items / notifies you when providers change.
 
-- Legge Radarr e/o Sonarr via API.
-- Considera solo contenuti `monitored` e mancanti.
-- Interroga TMDB Watch Providers per `COUNTRY=IT`.
-- Aggiunge tag tipo:
-  - `available-streaming`
-  - `streaming-netflix`
-  - `streaming-prime-video`
-  - `streaming-disney-plus`
-- Normalizza alias e nomi rumorosi dei provider TMDB prima di creare tag/statistiche.
-- Rimuove i tag gestiti quando il contenuto non risulta più disponibile, se `REMOVE_STALE_TAGS=true`.
-- Salva cronologia scansioni, cache disponibilità e storico notifiche in SQLite.
-- Può inviare notifiche ntfy quando cambiano i provider disponibili.
-- Di default è in `DRY_RUN=true`, quindi non modifica nulla.
+![Python >=3.12](https://img.shields.io/badge/python-%3E%3D3.12-blue)
+![Docker](https://img.shields.io/badge/docker-enabled-blue)
+![License: Unspecified](https://img.shields.io/badge/license-Unspecified-lightgrey)
+[![Build Status](https://github.com/gipasoft/watcharr/actions/workflows/build.yml/badge.svg)](https://github.com/gipasoft/watcharr/actions)
 
-## Requisiti
+Quick value proposition: scan your Radarr/Sonarr library, track which titles are available on streaming providers (via TMDB), and apply automatic tagging and notifications.
 
-- API key Radarr
-- API key Sonarr, opzionale
-- TMDB API Bearer Token
+---
 
-Su TMDB: Settings → API → API Read Access Token.
+**Dashboard Preview**
 
-## Avvio rapido
+![Dashboard Preview](docs/images/dashboard.png)
+![Mobile Preview](docs/images/mobile.png)
 
-Copia `.env.example` in `.env` e modifica i valori.
+---
+
+## Features
+
+- Radarr integration (uses `tmdbId` from movies)
+- Sonarr integration (resolves `tmdbId` or `tvdbId` via TMDB)
+- TMDB watch providers lookup (country configurable)
+- Provider normalization (canonical names for cleaner tags/stats)
+- SQLite cache & history for scan diffs and notifications
+- ntfy notifications when providers change
+- Responsive web dashboard for scan results and scheduler state
+- Automatic scheduler (APScheduler) with manual scan button
+- Provider filtering and automatic tagging
+
+## Quick Start
+
+1. Copy the example environment and edit values:
+
+```bash
+cp .env.example .env
+# edit .env and set RADARR_API_KEY, TMDB_BEARER_TOKEN, etc.
+```
+
+2. Start with Docker Compose:
 
 ```bash
 docker compose up -d
 ```
 
-La UI web è disponibile su:
+3. Open the web UI:
 
 ```text
 http://localhost:8080
 ```
 
-Per applicare davvero i tag:
+4. To actually apply tags (default is dry-run):
 
 ```env
 DRY_RUN=false
 ```
 
-## Variabili principali
+### Important environment variables
 
 ```env
 RADARR_URL=http://radarr:7878
@@ -73,46 +86,44 @@ NTFY_PRIORITY=default
 NTFY_TAGS=tv,streaming
 ```
 
-## Persistenza SQLite
+## Persistence (SQLite)
 
-All'avvio vengono create automaticamente le tabelle SQLite, se mancanti:
+On startup the service will create the required SQLite tables if missing:
 
 - `availability_cache`
 - `notification_history`
 - `scan_history`
 
-La cache confronta i provider dell'ultima scansione con quelli già noti per ogni contenuto e registra una voce di storico solo per stati non già notificati.
+The cache compares providers from the last scan and records a history entry only when a new (not-yet-notified) state is detected.
 
-## Scheduler interno
+## Scheduler
 
-Quando avviato come container web, `watcharr` resta in esecuzione e lancia scansioni automatiche con APScheduler.
+When run as the web container `watcharr` stays running and runs scheduled scans via APScheduler.
 
 ```env
 SCAN_INTERVAL_HOURS=12
 RUN_SCAN_ON_STARTUP=true
 ```
 
-La UI mostra stato scheduler, prossima scansione e ultima scansione. Il bottone manuale resta disponibile e usa lo stesso lock delle scansioni automatiche, quindi due scansioni non si sovrappongono.
+The dashboard shows scheduler status, next run and last run. A manual scan button uses the same lock as automatic scans so runs do not overlap.
 
-La tabella degli ultimi risultati mostra tipo contenuto (`movie`/`series`) e stato cambio provider: `NEW`, `UPDATED`, `UNCHANGED`, `REMOVED`.
+Scan results show content type (`movie` / `series`) and provider change state: `NEW`, `UPDATED`, `UNCHANGED`, `REMOVED`.
 
-## Normalizzazione provider
+## Provider normalization
 
-I provider TMDB vengono normalizzati in nomi canonici prima di tag, cache, statistiche e UI. Alcuni esempi:
+TMDB provider names are normalized to canonical names before tagging, caching and statistics. Examples:
 
 - `Amazon Prime Video with Ads` -> `Amazon Prime Video`
 - `Prime Video` -> `Amazon Prime Video`
 - `Apple TV Amazon Channel` -> `Apple TV+`
-- `Paramount+ Amazon Channel` -> `Paramount+`
-- `Crunchyroll Amazon Channel` -> `Crunchyroll`
 
-La UI mantiene anche i nomi originali TMDB come dettaglio di debug quando differiscono dal nome canonico.
+The UI also keeps the original TMDB name as a debug detail when it differs.
 
-## Notifiche ntfy
+## ntfy notifications
 
-Le notifiche sono opzionali. Vengono inviate solo quando i provider cambiano rispetto alla cache SQLite già nota; la prima scansione crea la baseline e non notifica.
+Notifications are optional. They are sent only when providers change compared to the known SQLite cache; the first scan creates the baseline and does not notify.
 
-Per ntfy.sh o un server self-hosted:
+For ntfy.sh or a self-hosted ntfy server:
 
 ```env
 NTFY_URL=https://ntfy.example.com
@@ -121,50 +132,97 @@ NTFY_PRIORITY=high
 NTFY_TAGS=tv,streaming
 ```
 
-Se il server richiede autenticazione puoi usare un bearer token:
+If the server requires auth you can use a bearer token:
 
 ```env
 NTFY_TOKEN=xxx
 ```
 
-oppure basic auth:
+or basic auth:
 
 ```env
 NTFY_USERNAME=utente
 NTFY_PASSWORD=password
 ```
 
-## Note
+## Notes on IDs
 
-Per Radarr viene usato `tmdbId` già presente nella movie entity.
+- Radarr: uses `tmdbId` present on the movie entity.
+- Sonarr: uses `tmdbId` when available, otherwise attempts `/find/{tvdbId}?external_source=tvdb_id` on TMDB.
 
-Per Sonarr:
-- se la serie ha `tmdbId`, usa quello;
-- altrimenti prova `tvdbId` tramite endpoint TMDB `/find/{tvdbId}?external_source=tvdb_id`.
+## Recommended first test
 
-## Primo test consigliato
+1. Keep `DRY_RUN=true`.
+2. Start the container.
+3. Check logs and dashboard.
+4. Switch `DRY_RUN=false` when you are ready to apply tags.
 
-1. Lascia `DRY_RUN=true`.
-2. Avvia il container.
-3. Controlla i log.
-4. Solo dopo metti `DRY_RUN=false`.
+## Architecture
 
-## Sviluppo
+Simple flow:
 
-Il codice applicativo vive nel package `watcharr`.
+```
+Radarr/Sonarr
+      ↓
+   Watcharr
+      ↓
+ TMDB Providers
+      ↓
+SQLite + ntfy + UI
+```
+
+## Disclaimer
+
+- Watcharr does not provide or host streaming content.
+- It only tracks and surfaces streaming availability metadata from TMDB watch providers.
+
+## Roadmap
+
+- [x] Radarr integration
+- [x] Sonarr integration
+- [x] TMDB watch providers lookup
+- [x] Provider normalization
+- [x] SQLite cache / history
+- [x] ntfy notifications
+- [x] Responsive dashboard
+- [x] Automatic scheduler
+- [x] Provider filters
+- [x] Automatic tagging
+
+Planned:
+
+- [ ] UI authentication / user preferences
+- [ ] Additional provider sources (e.g., JustWatch)
+- [ ] Export / API for integrations
+
+## Development
+
+- Run unit tests:
 
 ```bash
 python -m unittest discover -s tests
 ```
 
-La CLI resta disponibile con:
+- Run the CLI locally:
 
 ```bash
 python -m watcharr
 ```
 
-Nel container puoi eseguire una scansione CLI con:
+- Run a one-off scan in the container:
 
 ```bash
 docker compose run --rm watcharr python -m watcharr
 ```
+
+- Project layout (top-level):
+
+- `app/` - application package
+- `app/watcharr/clients` - external API clients (Radarr, Sonarr, TMDB)
+- `app/watcharr/core` - config, mappings, tags
+- `app/watcharr/services` - scanning, scheduling, notifications
+- `app/watcharr/storage` - SQLite storage
+- `app/watcharr/web` - web UI
+- `tests/` - unit tests
+
+If you want me to also add a short CONTRIBUTING section or example GitHub Actions badge link replacement, I can update that next.
