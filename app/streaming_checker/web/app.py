@@ -112,18 +112,31 @@ def home(request: Request, provider: str | None = None):
 
 
 @app.post("/scan")
-def trigger_scan():
+def trigger_scan(request: Request, provider: str | None = None):
     global _last_error
 
     service = _ensure_scheduler_service()
     if service is None:
         with _state_lock:
             _last_error = "scheduler unavailable"
+        if request.headers.get("HX-Request"):
+            return HTMLResponse(_dashboard_content_for_provider(provider))
         return RedirectResponse("/", status_code=303)
 
-    service.run_manual_scan()
+    execution = service.start_manual_scan()
+    if execution.started:
+        with _state_lock:
+            _last_error = None
+
+    if request.headers.get("HX-Request"):
+        return HTMLResponse(_dashboard_content_for_provider(provider))
 
     return RedirectResponse("/", status_code=303)
+
+
+@app.get("/scan/status", response_class=HTMLResponse)
+def scan_status(provider: str | None = None):
+    return HTMLResponse(_dashboard_content_for_provider(provider))
 
 
 def _ensure_scheduler_service() -> ScanSchedulerService | None:
@@ -146,6 +159,23 @@ def _scheduler_status() -> SchedulerStatus | None:
     if not _scheduler_service:
         return None
     return _scheduler_service.status()
+
+
+def _dashboard_content_for_provider(provider: str | None) -> str:
+    settings, config_error = _load_settings_for_page()
+    with _state_lock:
+        result = _last_result
+        scan_error = _last_error
+    scheduler_status = _scheduler_status()
+    active_provider = _resolve_provider_filter(result, provider)
+    return _dashboard_content(
+        settings=settings,
+        config_error=config_error,
+        scan_error=scan_error,
+        result=result,
+        scheduler_status=scheduler_status,
+        active_provider=active_provider,
+    )
 
 
 def _record_scan_execution(execution: ScanExecution):
@@ -185,9 +215,6 @@ def _render_page(
     scheduler_status: SchedulerStatus | None,
     active_provider: str | None,
 ) -> str:
-    summary = _configuration_summary(settings)
-    disabled = "disabled" if config_error else ""
-
     return f"""<!doctype html>
 <html lang="it">
 <head>
@@ -243,6 +270,24 @@ def _render_page(
       font-weight: 700;
       padding: 10px 16px;
       cursor: pointer;
+    }}
+    button .spinner {{ display: none; }}
+    button.is-loading {{
+      align-items: center;
+      display: inline-flex;
+      gap: 8px;
+    }}
+    button.is-loading .spinner {{
+      animation: spin 800ms linear infinite;
+      border: 2px solid rgba(255, 255, 255, 0.45);
+      border-top-color: white;
+      border-radius: 999px;
+      display: inline-block;
+      height: 14px;
+      width: 14px;
+    }}
+    @keyframes spin {{
+      to {{ transform: rotate(360deg); }}
     }}
     button:hover {{ background: var(--accent-strong); }}
     button:disabled {{ opacity: 0.5; cursor: not-allowed; }}
@@ -322,6 +367,28 @@ def _render_page(
       padding: 12px 14px;
       border-radius: 8px;
       margin-bottom: 18px;
+    }}
+    .scan-banner {{
+      border: 1px solid #99f6e4;
+      background: #ecfdf5;
+      color: var(--accent-strong);
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      align-items: center;
+      padding: 12px 14px;
+      border-radius: 8px;
+      margin-bottom: 18px;
+    }}
+    .scan-banner strong {{
+      display: block;
+      font-size: 14px;
+    }}
+    .scan-banner span {{
+      color: var(--muted);
+      display: block;
+      font-size: 12px;
+      margin-top: 2px;
     }}
     .empty {{
       color: var(--muted);
@@ -529,6 +596,7 @@ def _render_page(
       .grid {{ grid-template-columns: 1fr; }}
       .scheduler-strip {{ grid-template-columns: 1fr; }}
       header {{ gap: 14px; }}
+      .scan-banner {{ align-items: flex-start; flex-direction: column; }}
       button {{ width: 100%; }}
       .actions {{ width: 100%; }}
       .filter-bar {{ max-width: 100%; overflow: hidden; }}
@@ -539,41 +607,96 @@ def _render_page(
 </head>
 <body>
   <main>
-    <header>
-      <div>
-        <h1>streaming-checker</h1>
-        <p class="subtle">{_last_scan_text(result)}</p>
-      </div>
-      <form class="actions" method="post" action="/scan">
-        <button type="submit" {disabled}>Avvia scansione ora</button>
-      </form>
-    </header>
-
-    {_alert(config_error, "Configurazione non valida")}
-    {_alert(scan_error, "Ultima scansione fallita")}
-
-    {_dashboard(result)}
-    {_scheduler_panel(scheduler_status)}
-
-    <section class="layout">
-      <div class="panel">
-        <h2>Ultimi risultati</h2>
-        {_results_section(result, active_provider)}
-      </div>
-      <aside>
-        <div class="panel">
-          <h2>Statistiche provider</h2>
-          {_provider_statistics(result)}
-        </div>
-        <div class="panel" style="margin-top: 18px;">
-          <h2>Configurazione</h2>
-          {_config_table(summary)}
-        </div>
-      </aside>
-    </section>
+    {_dashboard_content(settings=settings, config_error=config_error, scan_error=scan_error, result=result, scheduler_status=scheduler_status, active_provider=active_provider)}
   </main>
 </body>
 </html>"""
+
+
+def _dashboard_content(
+    *,
+    settings: Settings | None,
+    config_error: str | None,
+    scan_error: str | None,
+    result: ScanRunResult | None,
+    scheduler_status: SchedulerStatus | None,
+    active_provider: str | None,
+) -> str:
+    summary = _configuration_summary(settings)
+    scanning = bool(scheduler_status and scheduler_status.scan_running)
+    disabled = "disabled" if config_error or scanning else ""
+    loading_class = " is-loading" if scanning else ""
+    button_text = "Scansione in corso..." if scanning else "Avvia scansione ora"
+    scan_url = _scan_url("/scan", active_provider)
+    poll_attrs = (
+        f' hx-get="{_scan_url("/scan/status", active_provider)}" hx-trigger="every 2s" hx-swap="outerHTML"'
+        if scanning
+        else ""
+    )
+
+    return f"""
+    <div id="dashboard-content"{poll_attrs}>
+      <header>
+        <div>
+          <h1>streaming-checker</h1>
+          <p class="subtle">{_last_scan_text(result)}</p>
+        </div>
+        <form class="actions" method="post" action="{scan_url}" hx-post="{scan_url}" hx-target="#dashboard-content" hx-swap="outerHTML">
+          <button type="submit" class="{loading_class.strip()}" {disabled}><span class="spinner" aria-hidden="true"></span>{button_text}</button>
+        </form>
+      </header>
+
+      {_alert(config_error, "Configurazione non valida")}
+      {_alert(scan_error, _scan_error_title(scan_error))}
+      {_scan_banner(scheduler_status)}
+
+      {_dashboard(result)}
+      {_scheduler_panel(scheduler_status)}
+
+      <section class="layout">
+        <div class="panel">
+          <h2>Ultimi risultati</h2>
+          {_results_section(result, active_provider)}
+        </div>
+        <aside>
+          <div class="panel">
+            <h2>Statistiche provider</h2>
+            {_provider_statistics(result)}
+          </div>
+          <div class="panel" style="margin-top: 18px;">
+            <h2>Configurazione</h2>
+            {_config_table(summary)}
+          </div>
+        </aside>
+      </section>
+    </div>"""
+
+
+def _scan_url(path: str, active_provider: str | None) -> str:
+    if active_provider is None:
+        return path
+    return f"{path}?provider={quote(active_provider)}"
+
+
+def _scan_error_title(message: str | None) -> str:
+    if message and "scan already running" in message:
+        return "Scansione già in corso"
+    return "Ultima scansione fallita"
+
+
+def _scan_banner(status: SchedulerStatus | None) -> str:
+    if not status or not status.scan_running:
+        return ""
+
+    started = _format_datetime(status.current_scan_started_at)
+    started_text = f"Avviata: {started}" if started != "-" else "Avvio in corso"
+    return (
+        '<div class="scan-banner" role="status" aria-live="polite">'
+        "<div><strong>Scansione in corso, attendere...</strong>"
+        f"<span>{escape(started_text)}</span></div>"
+        '<span class="status processed">running</span>'
+        "</div>"
+    )
 
 
 def _alert(message: str | None, title: str) -> str:

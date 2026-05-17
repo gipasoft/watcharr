@@ -7,6 +7,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "app"))
 from datetime import UTC, datetime
 
 from streaming_checker.services.runner import ArrScanResult, ScanItemResult, ScanRunResult
+from streaming_checker.services.scheduler import SchedulerStatus
 from streaming_checker.web.app import (
     _change_status_badge,
     _item_matches_provider,
@@ -81,6 +82,37 @@ class ScanResultsUiTest(unittest.TestCase):
         self.assertIn(".desktop-results", html)
         self.assertIn(".mobile-results", html)
         self.assertIn("overflow-x: hidden", html)
+
+    def test_page_shows_scan_running_state_and_htmx_polling(self):
+        started_at = datetime.now(UTC)
+        html = _render_page(
+            settings=None,
+            config_error=None,
+            scan_error=None,
+            result=_sample_result(),
+            scheduler_status=SchedulerStatus(
+                enabled=True,
+                running=True,
+                scan_running=True,
+                scan_state="running",
+                current_scan_started_at=started_at,
+                interval_hours=12.0,
+                run_scan_on_startup=True,
+                next_scan_at=None,
+                last_scan_at=None,
+                last_scan_source="manual",
+                last_skip_reason=None,
+                error=None,
+            ),
+            active_provider=None,
+        )
+
+        self.assertIn("Scansione in corso...", html)
+        self.assertIn("Scansione in corso, attendere...", html)
+        self.assertIn('hx-post="/scan"', html)
+        self.assertIn('hx-get="/scan/status"', html)
+        self.assertIn('hx-trigger="every 2s"', html)
+        self.assertIn("disabled", html)
 
     def test_provider_filter_bar_uses_counts_and_htmx_attrs(self):
         result = _sample_result()

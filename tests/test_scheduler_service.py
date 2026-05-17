@@ -1,6 +1,8 @@
 import sys
 import unittest
 from pathlib import Path
+from threading import Event
+from time import sleep
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "app"))
 
@@ -76,8 +78,60 @@ class SchedulerServiceTest(unittest.TestCase):
         self.assertIsNotNone(execution.result)
         self.assertEqual(len(executions), 1)
         self.assertFalse(status.scan_running)
+        self.assertEqual(status.scan_state, "completed")
+        self.assertIsNone(status.current_scan_started_at)
         self.assertEqual(status.last_scan_source, "manual")
         self.assertIsNotNone(status.last_scan_at)
+
+    def test_start_manual_scan_reports_running_state_until_background_scan_finishes(self):
+        started = Event()
+        release = Event()
+
+        class SlowRunner(FakeRunner):
+            def run(self):
+                started.set()
+                release.wait(timeout=2)
+                return super().run()
+
+        service = ScanSchedulerService(make_settings(), runner_factory=SlowRunner)
+
+        execution = service.start_manual_scan()
+        self.assertTrue(execution.started)
+        self.assertTrue(started.wait(timeout=1))
+
+        status = service.status()
+        self.assertTrue(status.scan_running)
+        self.assertEqual(status.scan_state, "running")
+        self.assertIsNotNone(status.current_scan_started_at)
+
+        skipped = service.start_manual_scan()
+        self.assertFalse(skipped.started)
+        self.assertEqual(skipped.skipped_reason, "scan already running; skipped manual scan")
+
+        release.set()
+        for _ in range(20):
+            if not service.status().scan_running:
+                break
+            sleep(0.05)
+
+        status = service.status()
+        self.assertFalse(status.scan_running)
+        self.assertEqual(status.scan_state, "completed")
+
+    def test_failed_scan_sets_failed_state(self):
+        class FailingRunner(FakeRunner):
+            def run(self):
+                raise RuntimeError("boom")
+
+        service = ScanSchedulerService(make_settings(), runner_factory=FailingRunner)
+
+        execution = service.run_manual_scan()
+        status = service.status()
+
+        self.assertTrue(execution.started)
+        self.assertEqual(execution.error, "boom")
+        self.assertEqual(status.scan_state, "failed")
+        self.assertEqual(status.error, "boom")
 
     def test_overlapping_scan_is_skipped(self):
         service = ScanSchedulerService(make_settings(), runner_factory=FakeRunner)
@@ -94,4 +148,3 @@ class SchedulerServiceTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-
