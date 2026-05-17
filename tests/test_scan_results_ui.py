@@ -81,7 +81,7 @@ class ScanResultsUiTest(unittest.TestCase):
         self.assertIn("word-break: keep-all", html)
         self.assertIn("white-space: normal", html)
         self.assertIn("white-space: nowrap", html)
-        self.assertIn(".media-type-cell", html)
+        self.assertIn(".results-table th:not(:last-child)", html)
         self.assertIn("padding-right: 18px", html)
         self.assertIn(".providers .provider-chip", html)
         self.assertIn(".desktop-results", html)

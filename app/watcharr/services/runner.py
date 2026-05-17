@@ -238,12 +238,13 @@ class ScanRunner:
             providers = ProviderNormalizer.canonical_names(normalized_providers)
             tagger.apply(client, item, providers)
             change = self.storage.record_availability(client.kind, item, providers) if self.storage else None
-            notification_sent = self._send_notification(client.kind, item.title, change)
+            notification_sent, notification_error = self._send_notification(client.kind, item.title, change)
             message = self._change_message(change) if change and change.changed else None
             if change and change.notification_created and self.notifier and not self.notifier.enabled:
                 message = f"{message}; ntfy disabled" if message else "ntfy disabled"
             if change and change.notification_created and self.notifier and self.notifier.enabled and not notification_sent:
-                message = f"{message}; ntfy send failed" if message else "ntfy send failed"
+                detail = f"ntfy send failed: {notification_error}" if notification_error else "ntfy send failed"
+                message = f"{message}; {detail}" if message else detail
             return ScanItemResult(
                 kind=client.kind,
                 media_type=self._media_type(client.kind),
@@ -298,15 +299,21 @@ class ScanRunner:
             message = f"{message}; notification already recorded"
         return message
 
-    def _send_notification(self, kind: str, title: str, change) -> bool:
+    def _send_notification(self, kind: str, title: str, change) -> tuple[bool, str | None]:
         if not change or not change.notification_created or not self.notifier:
-            return False
+            return False, None
 
         try:
-            return self.notifier.notify_provider_change(kind=kind, title=title, change=change)
+            sent = self.notifier.notify_provider_change(kind=kind, title=title, change=change)
+            if sent and self.storage:
+                self.storage.mark_notification_sent(change)
+            return sent, None
         except Exception as exc:
-            print(f"[ntfy] ERROR sending notification for {title}: {exc}")
-            return False
+            error = str(exc)
+            if self.storage:
+                self.storage.mark_notification_failed(change, error)
+            print(f"[ntfy] ERROR sending notification for {title}: {error}")
+            return False, error
 
     @staticmethod
     def _provider_categories(providers: list[NormalizedProvider]) -> list[str]:

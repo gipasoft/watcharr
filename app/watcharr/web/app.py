@@ -425,6 +425,9 @@ def _render_page(
       border-bottom: 1px solid var(--line);
       vertical-align: top;
     }}
+    .results-table th:not(:last-child), .results-table td:not(:last-child) {{
+      padding-right: 18px;
+    }}
     th {{ color: var(--muted); font-size: 12px; text-transform: uppercase; }}
     code {{
       background: #eef2f7;
@@ -509,7 +512,6 @@ def _render_page(
     .provider-raiplay {{ background: #dcfce7; border-color: #bbf7d0; color: #166534; }}
     .provider-crunchyroll {{ background: #ffedd5; border-color: #fed7aa; color: #c2410c; }}
     .provider-default {{ background: #eef2f7; border-color: var(--line); color: var(--text); }}
-    .media-type-cell {{ padding-right: 18px; }}
     .message-cell, .title-cell {{ overflow-wrap: anywhere; }}
     .mobile-results {{
       display: none;

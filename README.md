@@ -138,6 +138,7 @@ The UI also keeps the original TMDB name as a debug detail when it differs.
 ## ntfy notifications
 
 Notifications are optional. They are sent only when providers change compared to the known SQLite cache; the first scan creates the baseline and does not notify.
+Failed notification sends remain pending in SQLite and are retried on later scans until ntfy accepts them.
 
 For ntfy.sh or a self-hosted ntfy server:
 

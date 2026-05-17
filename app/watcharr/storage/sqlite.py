@@ -13,12 +13,13 @@ from watcharr.clients.arr_client import ArrItem
 from watcharr.core.config import default_database_path
 
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 
 @dataclass(frozen=True)
 class AvailabilityChange:
     media_key: str
+    providers_hash: str = ""
     previous_known: bool = False
     previous_providers: list[str] = field(default_factory=list)
     current_providers: list[str] = field(default_factory=list)
@@ -49,6 +50,7 @@ class SQLiteStorage:
             conn.execute("PRAGMA journal_mode=WAL")
             conn.execute("PRAGMA foreign_keys=ON")
             self._create_schema(conn)
+            self._migrate_schema(conn)
             self._set_schema_version(conn)
 
     def record_availability(self, kind: str, item: ArrItem, providers: list[str]) -> AvailabilityChange:
@@ -73,7 +75,12 @@ class SQLiteStorage:
             changed = previous_known and previous_hash != current_hash
             added = sorted(set(current_providers) - set(previous_providers))
             removed = sorted(set(previous_providers) - set(current_providers))
-            notification_created = False
+            notification_created = self._notification_pending(
+                conn=conn,
+                media_key=media_key,
+                event_type="providers_changed",
+                providers_hash=current_hash,
+            )
 
             conn.execute(
                 """
@@ -113,7 +120,7 @@ class SQLiteStorage:
             )
 
             if changed:
-                notification_created = self._record_notification_once(
+                notification_created = self._ensure_notification_pending(
                     conn=conn,
                     media_key=media_key,
                     kind=kind,
@@ -132,6 +139,7 @@ class SQLiteStorage:
 
             return AvailabilityChange(
                 media_key=media_key,
+                providers_hash=current_hash,
                 previous_known=previous_known,
                 previous_providers=previous_providers,
                 current_providers=current_providers,
@@ -191,11 +199,17 @@ class SQLiteStorage:
         with closing(self._connect()) as conn:
             return int(conn.execute("SELECT COUNT(*) FROM notification_history").fetchone()[0])
 
+    def mark_notification_sent(self, change: AvailabilityChange) -> bool:
+        return self._mark_notification_delivery(change, sent=True, error=None)
+
+    def mark_notification_failed(self, change: AvailabilityChange, error: str) -> bool:
+        return self._mark_notification_delivery(change, sent=False, error=error)
+
     @staticmethod
     def media_key(kind: str, media_id: int) -> str:
         return f"{kind}:{media_id}"
 
-    def _record_notification_once(
+    def _ensure_notification_pending(
         self,
         *,
         conn: sqlite3.Connection,
@@ -233,7 +247,62 @@ class SQLiteStorage:
                 created_at,
             ),
         )
-        return cursor.rowcount == 1
+        if cursor.rowcount == 1:
+            return True
+
+        return self._notification_pending(
+            conn=conn,
+            media_key=media_key,
+            event_type=event_type,
+            providers_hash=providers_hash,
+        )
+
+    def _notification_pending(
+        self,
+        *,
+        conn: sqlite3.Connection,
+        media_key: str,
+        event_type: str,
+        providers_hash: str,
+    ) -> bool:
+        row = conn.execute(
+            """
+            SELECT sent_at
+            FROM notification_history
+            WHERE media_key = ?
+              AND event_type = ?
+              AND providers_hash = ?
+            """,
+            (media_key, event_type, providers_hash),
+        ).fetchone()
+        return bool(row and row["sent_at"] is None)
+
+    def _mark_notification_delivery(
+        self,
+        change: AvailabilityChange,
+        *,
+        sent: bool,
+        error: str | None,
+    ) -> bool:
+        if not change.providers_hash:
+            return False
+
+        sent_at = self._now() if sent else None
+        with closing(self._connect()) as conn, conn:
+            cursor = conn.execute(
+                """
+                UPDATE notification_history
+                SET sent_at = COALESCE(?, sent_at),
+                    last_error = ?,
+                    attempt_count = attempt_count + 1
+                WHERE media_key = ?
+                  AND event_type = 'providers_changed'
+                  AND providers_hash = ?
+                  AND sent_at IS NULL
+                """,
+                (sent_at, error, change.media_key, change.providers_hash),
+            )
+            return cursor.rowcount == 1
 
     def _create_schema(self, conn: sqlite3.Connection):
         conn.executescript(
@@ -264,6 +333,9 @@ class SQLiteStorage:
                 providers_json TEXT NOT NULL,
                 change_summary_json TEXT NOT NULL,
                 created_at TEXT NOT NULL,
+                sent_at TEXT,
+                last_error TEXT,
+                attempt_count INTEGER NOT NULL DEFAULT 0,
                 UNIQUE(media_key, event_type, providers_hash)
             );
 
@@ -290,6 +362,20 @@ class SQLiteStorage:
             );
             """
         )
+
+    def _migrate_schema(self, conn: sqlite3.Connection):
+        columns = {
+            row["name"]
+            for row in conn.execute("PRAGMA table_info(notification_history)").fetchall()
+        }
+        if "sent_at" not in columns:
+            conn.execute("ALTER TABLE notification_history ADD COLUMN sent_at TEXT")
+        if "last_error" not in columns:
+            conn.execute("ALTER TABLE notification_history ADD COLUMN last_error TEXT")
+        if "attempt_count" not in columns:
+            conn.execute(
+                "ALTER TABLE notification_history ADD COLUMN attempt_count INTEGER NOT NULL DEFAULT 0"
+            )
 
     def _set_schema_version(self, conn: sqlite3.Connection):
         conn.execute(
