@@ -95,11 +95,17 @@ class ScanResultsUiTest(unittest.TestCase):
         self.assertIn(".providers .provider-chip", html)
         self.assertIn(".desktop-results", html)
         self.assertIn(".mobile-results", html)
+        self.assertIn("#dashboard-content { display: flex; flex-direction: column; }", html)
+        self.assertIn(".layout { order: 1; }", html)
+        self.assertIn(".grid { order: 2; }", html)
 
     def test_column_selector_defaults_to_hiding_service(self):
         html = _column_selector()
 
         self.assertIn("column-selector", html)
+        self.assertIn("<details", html)
+        self.assertIn("column-selector-button", html)
+        self.assertIn("Opzioni", html)
         self.assertIn('data-column-toggle="service"', html)
         self.assertIn('data-column-toggle="providers" checked', html)
         self.assertNotIn('data-column-toggle="service" checked', html)

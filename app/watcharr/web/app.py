@@ -571,9 +571,51 @@ def _render_page(
     .column-selector {{
       align-items: center;
       display: flex;
+      justify-content: flex-end;
+      margin-bottom: 12px;
+      position: relative;
+    }}
+    .column-selector-button {{
+      align-items: center;
+      background: #f8fafc;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      color: var(--muted);
+      cursor: pointer;
+      display: inline-flex;
+      font-size: 12px;
+      font-weight: 800;
+      gap: 6px;
+      list-style: none;
+      padding: 7px 10px;
+      user-select: none;
+    }}
+    .column-selector-button::-webkit-details-marker {{
+      display: none;
+    }}
+    .column-selector-button::after {{
+      content: "v";
+      font-size: 10px;
+      line-height: 1;
+    }}
+    .column-selector[open] .column-selector-button::after {{
+      transform: rotate(180deg);
+    }}
+    .column-selector-menu {{
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      box-shadow: 0 12px 30px rgba(15, 23, 42, 0.12);
+      display: flex;
       flex-wrap: wrap;
       gap: 8px;
-      margin-bottom: 12px;
+      justify-content: flex-end;
+      max-width: min(520px, calc(100vw - 40px));
+      padding: 10px;
+      position: absolute;
+      right: 0;
+      top: calc(100% + 6px);
+      z-index: 5;
     }}
     .column-toggle {{
       align-items: center;
@@ -689,6 +731,10 @@ def _render_page(
       word-break: break-word;
     }}
     @media (max-width: 820px) {{
+      #dashboard-content {{ display: flex; flex-direction: column; }}
+      .layout {{ order: 1; }}
+      .grid {{ order: 2; }}
+      .scheduler-card {{ order: 3; }}
       header, .layout {{ grid-template-columns: 1fr; display: grid; }}
       .grid {{ grid-template-columns: repeat(2, minmax(0, 1fr)); }}
       .scheduler-strip {{ grid-template-columns: repeat(2, minmax(0, 1fr)); }}
@@ -967,7 +1013,12 @@ def _column_selector() -> str:
         f"{label}</label>"
         for key, label, checked in columns
     )
-    return f'<nav class="column-selector desktop-results" aria-label="Colonne risultati">{toggles}</nav>'
+    return (
+        '<details class="column-selector desktop-results">'
+        '<summary class="column-selector-button" aria-label="Opzioni risultati">Opzioni</summary>'
+        f'<div class="column-selector-menu" role="group" aria-label="Colonne risultati">{toggles}</div>'
+        "</details>"
+    )
 
 
 def _provider_filter_bar(result: ScanRunResult | None, active_provider: str | None) -> str:
