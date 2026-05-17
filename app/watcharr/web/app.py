@@ -408,8 +408,8 @@ def _render_page(
       table-layout: fixed;
     }}
     .results-table th:nth-child(1), .results-table td:nth-child(1) {{ width: 9%; }}
-    .results-table th:nth-child(2), .results-table td:nth-child(2) {{ width: 9%; }}
-    .results-table th:nth-child(3), .results-table td:nth-child(3) {{ width: 24%; }}
+    .results-table th:nth-child(2), .results-table td:nth-child(2) {{ width: 13%; }}
+    .results-table th:nth-child(3), .results-table td:nth-child(3) {{ width: 20%; }}
     .results-table th:nth-child(4), .results-table td:nth-child(4) {{ width: 12%; }}
     .results-table th:nth-child(5), .results-table td:nth-child(5) {{ width: 12%; }}
     .results-table th:nth-child(6), .results-table td:nth-child(6) {{ width: 22%; }}
@@ -509,6 +509,7 @@ def _render_page(
     .provider-raiplay {{ background: #dcfce7; border-color: #bbf7d0; color: #166534; }}
     .provider-crunchyroll {{ background: #ffedd5; border-color: #fed7aa; color: #c2410c; }}
     .provider-default {{ background: #eef2f7; border-color: var(--line); color: var(--text); }}
+    .media-type-cell {{ padding-right: 18px; }}
     .message-cell, .title-cell {{ overflow-wrap: anywhere; }}
     .mobile-results {{
       display: none;
