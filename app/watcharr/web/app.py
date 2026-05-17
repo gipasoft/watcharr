@@ -401,19 +401,20 @@ def _render_page(
     }}
     .table-scroll {{
       max-width: 100%;
-      overflow-x: hidden;
+      overflow-x: auto;
       padding-bottom: 2px;
     }}
     .results-table {{
+      min-width: 920px;
       table-layout: fixed;
     }}
-    .results-table th:nth-child(1), .results-table td:nth-child(1) {{ width: 9%; }}
-    .results-table th:nth-child(2), .results-table td:nth-child(2) {{ width: 13%; }}
-    .results-table th:nth-child(3), .results-table td:nth-child(3) {{ width: 20%; }}
-    .results-table th:nth-child(4), .results-table td:nth-child(4) {{ width: 12%; }}
-    .results-table th:nth-child(5), .results-table td:nth-child(5) {{ width: 12%; }}
+    .results-table th:nth-child(1), .results-table td:nth-child(1) {{ width: 10%; }}
+    .results-table th:nth-child(2), .results-table td:nth-child(2) {{ width: 10%; }}
+    .results-table th:nth-child(3), .results-table td:nth-child(3) {{ width: 22%; }}
+    .results-table th:nth-child(4), .results-table td:nth-child(4) {{ width: 13%; }}
+    .results-table th:nth-child(5), .results-table td:nth-child(5) {{ width: 13%; }}
     .results-table th:nth-child(6), .results-table td:nth-child(6) {{ width: 22%; }}
-    .results-table th:nth-child(7), .results-table td:nth-child(7) {{ width: 12%; }}
+    .results-table th:nth-child(7), .results-table td:nth-child(7) {{ width: 10%; }}
     .results-table th, .results-table td {{
       min-width: 0;
       overflow-wrap: anywhere;
@@ -427,6 +428,14 @@ def _render_page(
     }}
     .results-table th:not(:last-child), .results-table td:not(:last-child) {{
       padding-right: 18px;
+    }}
+    .results-table th:nth-child(1), .results-table td:nth-child(1),
+    .results-table th:nth-child(2), .results-table td:nth-child(2),
+    .results-table th:nth-child(4), .results-table td:nth-child(4),
+    .results-table th:nth-child(5), .results-table td:nth-child(5) {{
+      overflow-wrap: normal;
+      white-space: nowrap;
+      word-break: keep-all;
     }}
     th {{ color: var(--muted); font-size: 12px; text-transform: uppercase; }}
     code {{
@@ -512,6 +521,11 @@ def _render_page(
     .provider-raiplay {{ background: #dcfce7; border-color: #bbf7d0; color: #166534; }}
     .provider-crunchyroll {{ background: #ffedd5; border-color: #fed7aa; color: #c2410c; }}
     .provider-default {{ background: #eef2f7; border-color: var(--line); color: var(--text); }}
+    .service-cell {{
+      overflow-wrap: normal;
+      white-space: nowrap;
+      word-break: keep-all;
+    }}
     .message-cell, .title-cell {{ overflow-wrap: anywhere; }}
     .mobile-results {{
       display: none;
@@ -805,7 +819,7 @@ def _results_table(result: ScanRunResult | None, active_provider: str | None = N
     for arr_result in result.arr_results:
         if not arr_result.enabled:
             rows.append(
-                f"<tr><td>{escape(arr_result.kind)}</td><td>-</td><td>-</td><td>-</td><td>"
+                f'<tr><td class="service-cell">{escape(arr_result.kind)}</td><td>-</td><td>-</td><td>-</td><td>'
                 '<span class="status skipped">disabled</span></td><td>-</td><td>-</td></tr>'
             )
             cards.append(
@@ -823,7 +837,7 @@ def _results_table(result: ScanRunResult | None, active_provider: str | None = N
 
         if not arr_result.items:
             rows.append(
-                f"<tr><td>{escape(arr_result.kind)}</td><td>-</td><td>-</td><td>-</td><td>"
+                f'<tr><td class="service-cell">{escape(arr_result.kind)}</td><td>-</td><td>-</td><td>-</td><td>'
                 '<span class="status processed">empty</span></td><td>-</td><td>Nessun elemento mancante</td></tr>'
             )
             cards.append(
@@ -847,7 +861,7 @@ def _results_table(result: ScanRunResult | None, active_provider: str | None = N
             message = item.message or "-"
             rows.append(
                 "<tr>"
-                f"<td>{escape(item.kind)}</td>"
+                f'<td class="service-cell">{escape(item.kind)}</td>'
                 f'<td class="media-type-cell">{_media_type_badge(item.media_type)}</td>'
                 f'<td class="title-cell">{escape(item.title)}</td>'
                 f"<td>{_change_status_badge(item.change_status)}</td>"

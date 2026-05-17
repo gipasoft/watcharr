@@ -63,6 +63,7 @@ class ScanResultsUiTest(unittest.TestCase):
         self.assertIn("results-table", html)
         self.assertIn("mobile-results", html)
         self.assertIn("result-card", html)
+        self.assertIn("service-cell", html)
         self.assertIn("provider-cell", html)
         self.assertIn("media-type-cell", html)
         self.assertIn("message-cell", html)
@@ -83,10 +84,12 @@ class ScanResultsUiTest(unittest.TestCase):
         self.assertIn("white-space: nowrap", html)
         self.assertIn(".results-table th:not(:last-child)", html)
         self.assertIn("padding-right: 18px", html)
+        self.assertIn("min-width: 920px", html)
+        self.assertIn("overflow-x: auto", html)
+        self.assertIn(".service-cell", html)
         self.assertIn(".providers .provider-chip", html)
         self.assertIn(".desktop-results", html)
         self.assertIn(".mobile-results", html)
-        self.assertIn("overflow-x: hidden", html)
 
     def test_page_shows_scan_running_state_and_htmx_polling(self):
         started_at = datetime.now(UTC)
