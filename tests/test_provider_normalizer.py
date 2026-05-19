@@ -18,6 +18,7 @@ class ProviderNormalizerTest(unittest.TestCase):
         self.assertEqual(normalizer.canonical_name("Prime Video"), "Amazon Prime Video")
         self.assertEqual(normalizer.canonical_name("Apple TV Amazon Channel"), "Apple TV+")
         self.assertEqual(normalizer.canonical_name("Paramount+ Amazon Channel"), "Paramount+")
+        self.assertEqual(normalizer.canonical_name("Paramount Plus Apple TV Channel"), "Paramount+")
         self.assertEqual(normalizer.canonical_name("Crunchyroll Amazon Channel"), "Crunchyroll")
 
     def test_deduplicates_by_canonical_name_and_keeps_originals(self):

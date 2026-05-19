@@ -19,9 +19,11 @@ from watcharr.web.app import (
     _ntfy_test_notice,
     _provider_badge,
     _provider_filter_bar,
+    _provider_statistics,
     _providers_display,
     _resolve_provider_filter,
     _render_page,
+    _results_section,
     _results_table,
     _sorted_statistics,
 )
@@ -47,6 +49,11 @@ class ScanResultsUiTest(unittest.TestCase):
         self.assertIn("provider-prime", html)
         self.assertIn("Amazon Prime Video", html)
         self.assertIn("TMDB: Prime Video", html)
+
+    def test_provider_display_hides_debug_when_originals_are_missing(self):
+        html = _providers_display(["Amazon Prime Video"], [])
+
+        self.assertNotIn("TMDB:", html)
 
     def test_provider_badge_uses_provider_color_mapping_and_fallback(self):
         self.assertIn("provider-netflix", _provider_badge("Netflix"))
@@ -104,6 +111,12 @@ class ScanResultsUiTest(unittest.TestCase):
         self.assertIn("Tutto (1)", html)
         self.assertIn("Movie (1)", html)
 
+    def test_media_filter_bar_counts_current_title_search(self):
+        html = _media_filter_bar(_sample_result(), None, "no providers")
+
+        self.assertIn("Tutto (1)", html)
+        self.assertIn("Movie (1)", html)
+
     def test_page_css_allows_long_provider_chips_to_wrap(self):
         html = _render_page(
             settings=_settings(),
@@ -126,6 +139,10 @@ class ScanResultsUiTest(unittest.TestCase):
         self.assertIn(".desktop-results", html)
         self.assertIn(".mobile-results", html)
         self.assertIn(".quick-filter-bar", html)
+        self.assertIn(".result-search", html)
+        self.assertIn(".sort-link", html)
+        self.assertIn(".provider-stats-panel", html)
+        self.assertIn(".provider-stats-scroll", html)
         self.assertIn(".media-filter-button.active", html)
         self.assertIn(".is-media-filtered", html)
         self.assertIn("#dashboard-content { display: flex; flex-direction: column; }", html)
@@ -222,11 +239,11 @@ class ScanResultsUiTest(unittest.TestCase):
             active_provider=None,
         )
 
-        self.assertIn("Scansione in corso...", html)
-        self.assertIn("Scansione in corso, attendere...", html)
+        self.assertIn("Scanning...", html)
         self.assertIn('hx-post="/scan"', html)
         self.assertIn('hx-get="/scan/status"', html)
         self.assertIn('hx-trigger="every 2s"', html)
+        self.assertIn('hx-disabled-elt="button"', html)
         self.assertIn("disabled", html)
 
     def test_provider_filter_bar_uses_counts_and_htmx_attrs(self):
@@ -239,6 +256,33 @@ class ScanResultsUiTest(unittest.TestCase):
         self.assertIn("(1)", html)
         self.assertIn('hx-target="#results-section"', html)
         self.assertIn("active", html)
+
+    def test_provider_filter_bar_preserves_search_and_sort(self):
+        html = _provider_filter_bar(_sample_result(), "Netflix", "deep", "title")
+
+        self.assertIn("/?q=deep&amp;sort=title", html)
+        self.assertIn("provider=Amazon+Prime+Video&amp;q=deep&amp;sort=title", html)
+
+    def test_results_section_has_title_search(self):
+        html = _results_section(_sample_result(), None, "movie")
+
+        self.assertIn('name="q"', html)
+        self.assertIn('value="movie"', html)
+        self.assertIn('hx-target="#results-section"', html)
+        self.assertIn('hx-push-url="true"', html)
+
+    def test_results_table_filters_by_title_search(self):
+        html = _results_table(_sample_result(), None, "movie")
+
+        self.assertIn("Movie", html)
+        self.assertNotIn("No Providers", html)
+
+    def test_results_table_renders_sort_links_and_active_state(self):
+        html = _results_table(_sample_result(), "Netflix", "movie", "title")
+
+        self.assertIn('class="sort-link active"', html)
+        self.assertIn("provider=Netflix", html)
+        self.assertIn("q=movie", html)
 
     def test_results_table_filters_by_canonical_provider(self):
         result = _sample_result()
@@ -257,6 +301,12 @@ class ScanResultsUiTest(unittest.TestCase):
     def test_item_matches_provider_uses_normalized_names(self):
         self.assertTrue(_item_matches_provider(["Netflix"], "Netflix"))
         self.assertFalse(_item_matches_provider(["Amazon Prime Video"], "Prime Video"))
+
+    def test_provider_statistics_uses_scroll_wrapper(self):
+        html = _provider_statistics(_sample_result())
+
+        self.assertIn("provider-stats-scroll", html)
+        self.assertLess(html.index("Amazon Prime Video"), html.index("Netflix"))
 
 
 def _sample_result():

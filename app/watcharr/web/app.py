@@ -5,7 +5,7 @@ from datetime import datetime
 from html import escape
 from pathlib import Path
 from threading import Lock
-from urllib.parse import quote, urlsplit, urlunsplit
+from urllib.parse import urlencode, urlsplit, urlunsplit
 
 from fastapi import FastAPI, Request
 from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
@@ -14,7 +14,7 @@ from fastapi.staticfiles import StaticFiles
 from watcharr.core.config import Settings, load_settings
 from watcharr.core.provider_mappings import PROVIDER_BADGE_COLORS
 from watcharr.services.notifications import NtfyNotifier
-from watcharr.services.runner import ScanRunResult
+from watcharr.services.runner import ScanItemResult, ScanRunResult
 from watcharr.services.scheduler import ScanExecution, ScanSchedulerService, SchedulerStatus
 from watcharr.storage import initialize_storage_from_environment
 
@@ -105,7 +105,7 @@ def _configuration_summary(settings: Settings | None) -> dict[str, str | bool | 
 
 
 @app.get("/", response_class=HTMLResponse)
-def home(request: Request, provider: str | None = None):
+def home(request: Request, provider: str | None = None, q: str | None = None, sort: str | None = None):
     settings, config_error = _load_settings_for_page()
 
     with _state_lock:
@@ -115,7 +115,9 @@ def home(request: Request, provider: str | None = None):
     scheduler_status = _scheduler_status()
 
     active_provider = _resolve_provider_filter(result, provider)
-    results_section = _results_section(result, active_provider)
+    search_query = _normalize_search_query(q)
+    active_sort = _resolve_sort(sort)
+    results_section = _results_section(result, active_provider, search_query, active_sort)
 
     if request.headers.get("HX-Request"):
         return HTMLResponse(results_section)
@@ -129,12 +131,14 @@ def home(request: Request, provider: str | None = None):
             result=result,
             scheduler_status=scheduler_status,
             active_provider=active_provider,
+            search_query=search_query,
+            active_sort=active_sort,
         )
     )
 
 
 @app.post("/scan")
-def trigger_scan(request: Request, provider: str | None = None):
+def trigger_scan(request: Request, provider: str | None = None, q: str | None = None, sort: str | None = None):
     global _last_error
 
     service = _ensure_scheduler_service()
@@ -142,7 +146,7 @@ def trigger_scan(request: Request, provider: str | None = None):
         with _state_lock:
             _last_error = "scheduler unavailable"
         if request.headers.get("HX-Request"):
-            return HTMLResponse(_dashboard_content_for_provider(provider))
+            return HTMLResponse(_dashboard_content_for_query(provider, q, sort))
         return RedirectResponse("/", status_code=303)
 
     execution = service.start_manual_scan()
@@ -151,18 +155,18 @@ def trigger_scan(request: Request, provider: str | None = None):
             _last_error = None
 
     if request.headers.get("HX-Request"):
-        return HTMLResponse(_dashboard_content_for_provider(provider))
+        return HTMLResponse(_dashboard_content_for_query(provider, q, sort))
 
     return RedirectResponse("/", status_code=303)
 
 
 @app.get("/scan/status", response_class=HTMLResponse)
-def scan_status(provider: str | None = None):
-    return HTMLResponse(_dashboard_content_for_provider(provider))
+def scan_status(provider: str | None = None, q: str | None = None, sort: str | None = None):
+    return HTMLResponse(_dashboard_content_for_query(provider, q, sort))
 
 
 @app.post("/ntfy/test")
-def test_ntfy(request: Request, provider: str | None = None):
+def test_ntfy(request: Request, provider: str | None = None, q: str | None = None, sort: str | None = None):
     global _last_ntfy_test
 
     try:
@@ -178,7 +182,7 @@ def test_ntfy(request: Request, provider: str | None = None):
         _last_ntfy_test = (False, f"ntfy test failed: {exc}")
 
     if request.headers.get("HX-Request"):
-        return HTMLResponse(_dashboard_content_for_provider(provider))
+        return HTMLResponse(_dashboard_content_for_query(provider, q, sort))
 
     return RedirectResponse("/", status_code=303)
 
@@ -206,6 +210,10 @@ def _scheduler_status() -> SchedulerStatus | None:
 
 
 def _dashboard_content_for_provider(provider: str | None) -> str:
+    return _dashboard_content_for_query(provider, None, None)
+
+
+def _dashboard_content_for_query(provider: str | None, q: str | None, sort: str | None) -> str:
     settings, config_error = _load_settings_for_page()
     with _state_lock:
         result = _last_result
@@ -213,6 +221,8 @@ def _dashboard_content_for_provider(provider: str | None) -> str:
         ntfy_test = _last_ntfy_test
     scheduler_status = _scheduler_status()
     active_provider = _resolve_provider_filter(result, provider)
+    search_query = _normalize_search_query(q)
+    active_sort = _resolve_sort(sort)
     return _dashboard_content(
         settings=settings,
         config_error=config_error,
@@ -221,6 +231,8 @@ def _dashboard_content_for_provider(provider: str | None) -> str:
         result=result,
         scheduler_status=scheduler_status,
         active_provider=active_provider,
+        search_query=search_query,
+        active_sort=active_sort,
     )
 
 
@@ -260,6 +272,8 @@ def _render_page(
     result: ScanRunResult | None,
     scheduler_status: SchedulerStatus | None,
     active_provider: str | None,
+    search_query: str = "",
+    active_sort: str | None = None,
     ntfy_test: tuple[bool, str] | None = None,
 ) -> str:
     return f"""<!doctype html>
@@ -396,6 +410,31 @@ def _render_page(
       gap: 8px;
       margin-bottom: 14px;
     }}
+    .results-tools {{
+      display: grid;
+      gap: 12px;
+      margin-bottom: 14px;
+    }}
+    .result-search {{
+      display: flex;
+      gap: 8px;
+      max-width: 460px;
+    }}
+    .result-search input {{
+      background: #ffffff;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      color: var(--text);
+      flex: 1 1 auto;
+      font: inherit;
+      min-width: 0;
+      padding: 10px 12px;
+    }}
+    .result-search input:focus {{
+      border-color: var(--accent);
+      box-shadow: 0 0 0 3px rgba(15, 118, 110, 0.12);
+      outline: 0;
+    }}
     .quick-filter-bar {{
       display: flex;
       flex-wrap: wrap;
@@ -522,6 +561,23 @@ def _render_page(
       word-break: keep-all;
     }}
     th {{ color: var(--muted); font-size: 12px; text-transform: uppercase; }}
+    .sort-link {{
+      color: inherit;
+      display: inline-flex;
+      gap: 4px;
+      text-decoration: none;
+      white-space: nowrap;
+    }}
+    .sort-link:hover {{
+      color: var(--accent-strong);
+    }}
+    .sort-link.active {{
+      color: var(--accent-strong);
+    }}
+    .sort-indicator {{
+      font-size: 10px;
+      line-height: 1;
+    }}
     code {{
       background: #eef2f7;
       border-radius: 4px;
@@ -826,6 +882,27 @@ def _render_page(
     .stats-table td {{
       padding: 9px 8px;
     }}
+    .provider-stats-panel {{
+      max-height: 430px;
+      overflow: hidden;
+    }}
+    .provider-stats-scroll {{
+      max-height: 250px;
+      overflow-y: auto;
+      padding-right: 4px;
+    }}
+    .stats-table {{
+      table-layout: fixed;
+    }}
+    .stats-table td:first-child {{
+      overflow-wrap: anywhere;
+      word-break: break-word;
+    }}
+    .stats-table td:last-child {{
+      color: var(--accent-strong);
+      font-size: 15px;
+      width: 56px;
+    }}
     .config-list {{
       display: grid;
       grid-template-columns: minmax(120px, 0.9fr) minmax(0, 1.1fr);
@@ -851,6 +928,7 @@ def _render_page(
       .grid {{ grid-template-columns: repeat(2, minmax(0, 1fr)); }}
       .scheduler-strip {{ grid-template-columns: repeat(2, minmax(0, 1fr)); }}
       .actions {{ justify-content: start; }}
+      .result-search {{ max-width: none; }}
       .desktop-results {{ display: none; }}
       .mobile-results {{ display: grid; gap: 0; }}
     }}
@@ -862,6 +940,7 @@ def _render_page(
       .scan-banner {{ align-items: flex-start; flex-direction: column; }}
       button {{ width: 100%; }}
       .actions {{ width: 100%; }}
+      .result-search {{ flex-direction: column; }}
       .filter-bar {{ max-width: 100%; overflow: hidden; }}
       .filter-bar a {{ max-width: 100%; }}
       .media-filter-button {{ width: auto; }}
@@ -871,7 +950,7 @@ def _render_page(
 </head>
 <body>
   <main>
-    {_dashboard_content(settings=settings, config_error=config_error, scan_error=scan_error, ntfy_test=ntfy_test, result=result, scheduler_status=scheduler_status, active_provider=active_provider)}
+    {_dashboard_content(settings=settings, config_error=config_error, scan_error=scan_error, ntfy_test=ntfy_test, result=result, scheduler_status=scheduler_status, active_provider=active_provider, search_query=search_query, active_sort=active_sort)}
   </main>
   <script>
     (() => {{
@@ -1002,15 +1081,18 @@ def _dashboard_content(
     result: ScanRunResult | None,
     scheduler_status: SchedulerStatus | None,
     active_provider: str | None,
+    search_query: str = "",
+    active_sort: str | None = None,
 ) -> str:
     summary = _configuration_summary(settings)
     scanning = bool(scheduler_status and scheduler_status.scan_running)
     disabled = "disabled" if config_error or scanning else ""
     loading_class = " is-loading" if scanning else ""
-    button_text = "Scansione in corso..." if scanning else "Avvia scansione ora"
-    scan_url = _scan_url("/scan", active_provider)
+    button_text = "Scanning..." if scanning else "Avvia scansione ora"
+    scan_url = _query_url("/scan", active_provider, search_query, active_sort)
+    scan_url_attr = escape(scan_url, quote=True)
     poll_attrs = (
-        f' hx-get="{_scan_url("/scan/status", active_provider)}" hx-trigger="every 2s" hx-swap="outerHTML"'
+        f' hx-get="{escape(_query_url("/scan/status", active_provider, search_query, active_sort), quote=True)}" hx-trigger="every 2s" hx-swap="outerHTML"'
         if scanning
         else ""
     )
@@ -1022,7 +1104,7 @@ def _dashboard_content(
           <h1>Watcharr</h1>
           <p class="subtle">{_last_scan_text(result)}</p>
         </div>
-        <form class="actions" method="post" action="{scan_url}" hx-post="{scan_url}" hx-target="#dashboard-content" hx-swap="outerHTML">
+        <form class="actions" method="post" action="{scan_url_attr}" hx-post="{scan_url_attr}" hx-target="#dashboard-content" hx-swap="outerHTML" hx-disabled-elt="button">
           <button type="submit" class="{loading_class.strip()}" {disabled}><span class="spinner" aria-hidden="true"></span>{button_text}</button>
         </form>
       </header>
@@ -1038,17 +1120,17 @@ def _dashboard_content(
       <section class="layout">
         <div class="panel">
           <h2>Ultimi risultati</h2>
-          {_results_section(result, active_provider)}
+          {_results_section(result, active_provider, search_query, active_sort)}
         </div>
         <aside>
-          <div class="panel">
+          <div class="panel provider-stats-panel">
             <h2>Statistiche provider</h2>
             {_provider_statistics(result)}
           </div>
           <div class="panel" style="margin-top: 18px;">
             <h2>Configurazione</h2>
             {_config_table(summary)}
-            {_ntfy_test_form(settings, active_provider)}
+            {_ntfy_test_form(settings, active_provider, search_query, active_sort)}
           </div>
         </aside>
       </section>
@@ -1056,9 +1138,20 @@ def _dashboard_content(
 
 
 def _scan_url(path: str, active_provider: str | None) -> str:
-    if active_provider is None:
+    return _query_url(path, active_provider, "", None)
+
+
+def _query_url(path: str, active_provider: str | None, search_query: str = "", active_sort: str | None = None) -> str:
+    params: dict[str, str] = {}
+    if active_provider:
+        params["provider"] = active_provider
+    if search_query:
+        params["q"] = search_query
+    if active_sort:
+        params["sort"] = active_sort
+    if not params:
         return path
-    return f"{path}?provider={quote(active_provider)}"
+    return f"{path}?{urlencode(params)}"
 
 
 def _scan_error_title(message: str | None) -> str:
@@ -1075,7 +1168,7 @@ def _scan_banner(status: SchedulerStatus | None) -> str:
     started_text = f"Avviata: {started}" if started != "-" else "Avvio in corso"
     return (
         '<div class="scan-banner" role="status" aria-live="polite">'
-        "<div><strong>Scansione in corso, attendere...</strong>"
+        "<div><strong>Scanning...</strong>"
         f"<span>{escape(started_text)}</span></div>"
         '<span class="status processed">running</span>'
         "</div>"
@@ -1097,15 +1190,21 @@ def _ntfy_test_notice(ntfy_test: tuple[bool, str] | None) -> str:
     return f'<div class="{css_class}"><strong>{title}:</strong> {escape(message)}</div>'
 
 
-def _ntfy_test_form(settings: Settings | None, active_provider: str | None) -> str:
+def _ntfy_test_form(
+    settings: Settings | None,
+    active_provider: str | None,
+    search_query: str = "",
+    active_sort: str | None = None,
+) -> str:
     if settings is None:
         return ""
 
     disabled = "" if settings.ntfy_url and settings.ntfy_topic else " disabled"
-    action = _scan_url("/ntfy/test", active_provider)
+    action = _query_url("/ntfy/test", active_provider, search_query, active_sort)
+    action_attr = escape(action, quote=True)
     return (
-        f'<form class="actions" style="margin-top: 14px;" method="post" action="{action}" '
-        f'hx-post="{action}" hx-target="#dashboard-content" hx-swap="outerHTML">'
+        f'<form class="actions" style="margin-top: 14px;" method="post" action="{action_attr}" '
+        f'hx-post="{action_attr}" hx-target="#dashboard-content" hx-swap="outerHTML">'
         f'<button type="submit"{disabled}>Test ntfy</button>'
         "</form>"
     )
@@ -1161,24 +1260,54 @@ def _scheduler_panel(status: SchedulerStatus | None) -> str:
     return f'<section class="panel scheduler-card"><h2>Scheduler</h2><div class="scheduler-strip">{rendered}</div></section>'
 
 
-def _results_section(result: ScanRunResult | None, active_provider: str | None) -> str:
+def _results_section(
+    result: ScanRunResult | None,
+    active_provider: str | None,
+    search_query: str = "",
+    active_sort: str | None = None,
+) -> str:
     return (
         '<div id="results-section">'
-        + _media_filter_bar(result, active_provider)
-        + _provider_filter_bar(result, active_provider)
-        + _results_table(result, active_provider)
+        + _search_form(active_provider, search_query, active_sort)
+        + _media_filter_bar(result, active_provider, search_query)
+        + _provider_filter_bar(result, active_provider, search_query, active_sort)
+        + _results_table(result, active_provider, search_query, active_sort)
         + "</div>"
     )
 
 
-def _media_filter_bar(result: ScanRunResult | None, active_provider: str | None = None) -> str:
+def _search_form(active_provider: str | None, search_query: str = "", active_sort: str | None = None) -> str:
+    provider_input = (
+        f'<input type="hidden" name="provider" value="{escape(active_provider)}">'
+        if active_provider
+        else ""
+    )
+    sort_input = f'<input type="hidden" name="sort" value="{escape(active_sort)}">' if active_sort else ""
+    value = escape(search_query)
+    return (
+        '<div class="results-tools">'
+        '<form class="result-search" method="get" action="/" '
+        'hx-get="/" hx-target="#results-section" hx-push-url="true" hx-trigger="submit, input changed delay:350ms from:input[name=\'q\']">'
+        f"{provider_input}{sort_input}"
+        f'<input type="search" name="q" value="{value}" placeholder="Cerca titolo..." aria-label="Cerca titolo" autocomplete="off">'
+        '<button type="submit">Cerca</button>'
+        "</form>"
+        "</div>"
+    )
+
+
+def _media_filter_bar(
+    result: ScanRunResult | None,
+    active_provider: str | None = None,
+    search_query: str = "",
+) -> str:
     if result is None:
         return ""
 
     counts = {"all": 0, "movie": 0, "series": 0}
     for arr_result in result.arr_results:
         for item in arr_result.items:
-            if not _item_matches_provider(item.providers, active_provider):
+            if not _item_matches_filters(item, active_provider, search_query):
                 continue
             counts["all"] += 1
             if item.media_type in ("movie", "series"):
@@ -1234,119 +1363,146 @@ def _column_selector() -> str:
     )
 
 
-def _provider_filter_bar(result: ScanRunResult | None, active_provider: str | None) -> str:
+def _provider_filter_bar(
+    result: ScanRunResult | None,
+    active_provider: str | None,
+    search_query: str = "",
+    active_sort: str | None = None,
+) -> str:
     if result is None or not result.provider_statistics:
         return ""
 
-    chips = [_filter_chip("All", None, result.processed_count, active_provider is None)]
+    chips = [
+        _filter_chip("All", None, result.processed_count, active_provider is None, search_query, active_sort)
+    ]
     chips.extend(
-        _filter_chip(provider, provider, count, provider == active_provider)
+        _filter_chip(provider, provider, count, provider == active_provider, search_query, active_sort)
         for provider, count in _sorted_statistics(result.provider_statistics)
     )
     return '<nav class="filter-bar" aria-label="Provider filters">' + "".join(chips) + "</nav>"
 
 
-def _filter_chip(label: str, provider: str | None, count: int, active: bool) -> str:
-    href = "/" if provider is None else f"/?provider={quote(provider)}"
+def _filter_chip(
+    label: str,
+    provider: str | None,
+    count: int,
+    active: bool,
+    search_query: str = "",
+    active_sort: str | None = None,
+) -> str:
+    href = _query_url("/", provider, search_query, active_sort)
+    href_attr = escape(href, quote=True)
     active_class = " active" if active else ""
     chip = _provider_badge(label, extra_class=f"filter-chip{active_class}", count=count)
     return (
-        f'<a href="{href}" hx-get="{href}" hx-target="#results-section" '
+        f'<a href="{href_attr}" hx-get="{href_attr}" hx-target="#results-section" '
         f'hx-push-url="true">{chip}</a>'
     )
 
 
-def _results_table(result: ScanRunResult | None, active_provider: str | None = None) -> str:
+def _results_table(
+    result: ScanRunResult | None,
+    active_provider: str | None = None,
+    search_query: str = "",
+    active_sort: str | None = None,
+) -> str:
     if result is None:
         return '<p class="empty">Nessuna scansione eseguita in questa sessione.</p>'
 
     rows: list[str] = []
     cards: list[str] = []
+    show_service_placeholders = active_provider is None and not search_query and active_sort is None
+    matching_items: list[ScanItemResult] = []
     for arr_result in result.arr_results:
         if not arr_result.enabled:
-            rows.append(
-                f'<tr data-result-media-type="other"><td class="service-cell" data-column="service" hidden>{escape(arr_result.kind)}</td>'
-                '<td class="media-type-cell" data-column="type">-</td>'
-                '<td class="title-cell" data-column="title">-</td>'
-                '<td class="provider-cell" data-column="providers">-</td>'
-                '<td class="change-cell" data-column="change">-</td>'
-                '<td class="status-cell" data-column="status"><span class="status skipped">disabled</span></td>'
-                '<td class="message-cell" data-column="message">-</td></tr>'
-            )
-            cards.append(
-                _result_card(
-                    service=arr_result.kind,
-                    media_type=None,
-                    title="Servizio disabilitato",
-                    poster_url=None,
-                    arr_url=None,
-                    providers_html="-",
-                    change_status=None,
-                    status="skipped",
-                    message=None,
+            if show_service_placeholders:
+                rows.append(
+                    f'<tr data-result-media-type="other"><td class="service-cell" data-column="service" hidden>{escape(arr_result.kind)}</td>'
+                    '<td class="media-type-cell" data-column="type">-</td>'
+                    '<td class="title-cell" data-column="title">-</td>'
+                    '<td class="provider-cell" data-column="providers">-</td>'
+                    '<td class="change-cell" data-column="change">-</td>'
+                    '<td class="status-cell" data-column="status"><span class="status skipped">disabled</span></td>'
+                    '<td class="message-cell" data-column="message">-</td></tr>'
                 )
-            )
+                cards.append(
+                    _result_card(
+                        service=arr_result.kind,
+                        media_type=None,
+                        title="Servizio disabilitato",
+                        poster_url=None,
+                        arr_url=None,
+                        providers_html="-",
+                        change_status=None,
+                        status="skipped",
+                        message=None,
+                    )
+                )
             continue
 
         if not arr_result.items:
-            rows.append(
-                f'<tr data-result-media-type="other"><td class="service-cell" data-column="service" hidden>{escape(arr_result.kind)}</td>'
-                '<td class="media-type-cell" data-column="type">-</td>'
-                '<td class="title-cell" data-column="title">-</td>'
-                '<td class="provider-cell" data-column="providers">-</td>'
-                '<td class="change-cell" data-column="change">-</td>'
-                '<td class="status-cell" data-column="status"><span class="status processed">empty</span></td>'
-                '<td class="message-cell" data-column="message">Nessun elemento mancante</td></tr>'
-            )
-            cards.append(
-                _result_card(
-                    service=arr_result.kind,
-                    media_type=None,
-                    title="Nessun elemento mancante",
-                    poster_url=None,
-                    arr_url=None,
-                    providers_html="-",
-                    change_status=None,
-                    status="processed",
-                    message=None,
+            if show_service_placeholders:
+                rows.append(
+                    f'<tr data-result-media-type="other"><td class="service-cell" data-column="service" hidden>{escape(arr_result.kind)}</td>'
+                    '<td class="media-type-cell" data-column="type">-</td>'
+                    '<td class="title-cell" data-column="title">-</td>'
+                    '<td class="provider-cell" data-column="providers">-</td>'
+                    '<td class="change-cell" data-column="change">-</td>'
+                    '<td class="status-cell" data-column="status"><span class="status processed">empty</span></td>'
+                    '<td class="message-cell" data-column="message">Nessun elemento mancante</td></tr>'
                 )
-            )
+                cards.append(
+                    _result_card(
+                        service=arr_result.kind,
+                        media_type=None,
+                        title="Nessun elemento mancante",
+                        poster_url=None,
+                        arr_url=None,
+                        providers_html="-",
+                        change_status=None,
+                        status="processed",
+                        message=None,
+                    )
+                )
             continue
 
         for item in arr_result.items:
-            if not _item_matches_provider(item.providers, active_provider):
-                continue
+            if _item_matches_filters(item, active_provider, search_query):
+                matching_items.append(item)
 
-            providers = _providers_display(item.providers, item.original_provider_names)
-            message = item.message or "-"
-            link_attrs = _result_link_attrs(item.arr_url)
-            rows.append(
-                f'<tr data-result-media-type="{escape(item.media_type)}"{link_attrs}>'
-                f'<td class="service-cell" data-column="service" hidden>{escape(item.kind)}</td>'
-                f'<td class="media-type-cell" data-column="type">{_media_type_badge(item.media_type)}</td>'
-                f'<td class="title-cell" data-column="title">{_title_with_poster(item.title, item.poster_url, item.arr_url)}</td>'
-                f'<td class="provider-cell" data-column="providers">{providers}</td>'
-                f'<td class="change-cell" data-column="change">{_change_status_badge(item.change_status)}</td>'
-                f'<td class="status-cell" data-column="status"><span class="status {escape(item.status)}">{escape(item.status)}</span></td>'
-                f'<td class="message-cell" data-column="message">{escape(message)}</td>'
-                "</tr>"
+    for item in _sort_items(matching_items, active_sort):
+        providers = _providers_display(item.providers, item.original_provider_names)
+        message = item.message or "-"
+        link_attrs = _result_link_attrs(item.arr_url)
+        rows.append(
+            f'<tr data-result-media-type="{escape(item.media_type)}"{link_attrs}>'
+            f'<td class="service-cell" data-column="service" hidden>{escape(item.kind)}</td>'
+            f'<td class="media-type-cell" data-column="type">{_media_type_badge(item.media_type)}</td>'
+            f'<td class="title-cell" data-column="title">{_title_with_poster(item.title, item.poster_url, item.arr_url)}</td>'
+            f'<td class="provider-cell" data-column="providers">{providers}</td>'
+            f'<td class="change-cell" data-column="change">{_change_status_badge(item.change_status)}</td>'
+            f'<td class="status-cell" data-column="status"><span class="status {escape(item.status)}">{escape(item.status)}</span></td>'
+            f'<td class="message-cell" data-column="message">{escape(message)}</td>'
+            "</tr>"
+        )
+        cards.append(
+            _result_card(
+                service=item.kind,
+                media_type=item.media_type,
+                title=item.title,
+                poster_url=item.poster_url,
+                arr_url=item.arr_url,
+                providers_html=providers,
+                change_status=item.change_status,
+                status=item.status,
+                message=item.message,
             )
-            cards.append(
-                _result_card(
-                    service=item.kind,
-                    media_type=item.media_type,
-                    title=item.title,
-                    poster_url=item.poster_url,
-                    arr_url=item.arr_url,
-                    providers_html=providers,
-                    change_status=item.change_status,
-                    status=item.status,
-                    message=item.message,
-                )
-            )
+        )
 
     if not rows:
         provider_text = escape(active_provider) if active_provider else "questo filtro"
+        if search_query:
+            provider_text = f'"{escape(search_query)}"'
         return f'<p class="empty">Nessun risultato per {provider_text}.</p>'
 
     return (
@@ -1354,10 +1510,10 @@ def _results_table(result: ScanRunResult | None, active_provider: str | None = N
         + '<div class="table-scroll desktop-results"><table class="results-table"><thead><tr>'
         '<th class="service-cell" data-column="service" hidden>Servizio</th>'
         '<th class="media-type-cell" data-column="type">Tipo</th>'
-        '<th class="title-cell" data-column="title">Titolo</th>'
-        '<th class="provider-cell" data-column="providers">Provider</th>'
-        '<th class="change-cell" data-column="change">Cambio</th>'
-        '<th class="status-cell" data-column="status">Stato</th>'
+        f'<th class="title-cell" data-column="title">{_sort_link("Titolo", "title", active_provider, search_query, active_sort)}</th>'
+        f'<th class="provider-cell" data-column="providers">{_sort_link("Provider", "provider", active_provider, search_query, active_sort)}</th>'
+        f'<th class="change-cell" data-column="change">{_sort_link("Cambio", "change", active_provider, search_query, active_sort)}</th>'
+        f'<th class="status-cell" data-column="status">{_sort_link("Stato", "status", active_provider, search_query, active_sort)}</th>'
         '<th class="message-cell" data-column="message">Messaggio</th>'
         "</tr></thead><tbody>"
         + "".join(rows)
@@ -1386,7 +1542,7 @@ def _providers_display(canonical_names: list[str], original_names: list[str]) ->
 
     chips = "".join(_provider_badge(provider) for provider in canonical_names)
     display = f'<span class="providers">{chips}</span>'
-    if sorted(canonical_names) != sorted(original_names):
+    if original_names and sorted(canonical_names) != sorted(original_names):
         originals = ", ".join(original_names) if original_names else "-"
         display = f'{display}<span class="debug" title="TMDB: {escape(originals)}">TMDB: {escape(originals)}</span>'
     return display
@@ -1477,6 +1633,47 @@ def _result_card(
     )
 
 
+SORT_OPTIONS = {"title", "provider", "change", "status"}
+
+
+def _sort_link(
+    label: str,
+    sort_key: str,
+    active_provider: str | None,
+    search_query: str,
+    active_sort: str | None,
+) -> str:
+    next_sort = None if active_sort == sort_key else sort_key
+    href = _query_url("/", active_provider, search_query, next_sort)
+    href_attr = escape(href, quote=True)
+    active_class = " active" if active_sort == sort_key else ""
+    indicator = '<span class="sort-indicator" aria-hidden="true">▲</span>' if active_sort == sort_key else ""
+    return (
+        f'<a class="sort-link{active_class}" href="{href_attr}" hx-get="{href_attr}" '
+        f'hx-target="#results-section" hx-push-url="true">{escape(label)}{indicator}</a>'
+    )
+
+
+def _sort_items(items: list[ScanItemResult], active_sort: str | None) -> list[ScanItemResult]:
+    if active_sort is None:
+        return items
+
+    if active_sort == "title":
+        return sorted(items, key=lambda item: item.title.casefold())
+    if active_sort == "provider":
+        return sorted(items, key=lambda item: _provider_sort_value(item).casefold())
+    if active_sort == "change":
+        order = {"NEW": 0, "UPDATED": 1, "UNCHANGED": 2, "REMOVED": 3}
+        return sorted(items, key=lambda item: (order.get(item.change_status.upper(), 99), item.title.casefold()))
+    if active_sort == "status":
+        return sorted(items, key=lambda item: (item.status.casefold(), item.title.casefold()))
+    return items
+
+
+def _provider_sort_value(item: ScanItemResult) -> str:
+    return ", ".join(item.providers) if item.providers else ""
+
+
 def _media_type_badge(media_type: str) -> str:
     css_class = "badge-series" if media_type == "series" else "badge-movie"
     label = "📺 Series" if media_type == "series" else "🎬 Movie"
@@ -1511,7 +1708,12 @@ def _provider_statistics(result: ScanRunResult | None) -> str:
         if category_rows
         else ""
     )
-    return '<table class="stats-table"><tbody>' + provider_rows + "</tbody></table>" + categories
+    return (
+        '<div class="provider-stats-scroll"><table class="stats-table"><tbody>'
+        + provider_rows
+        + "</tbody></table></div>"
+        + categories
+    )
 
 
 def _provider_badge(provider: str, *, extra_class: str = "", count: int | None = None) -> str:
@@ -1538,10 +1740,31 @@ def _resolve_provider_filter(result: ScanRunResult | None, provider: str | None)
     return None
 
 
+def _resolve_sort(sort: str | None) -> str | None:
+    if not sort:
+        return None
+    requested = sort.strip().casefold()
+    return requested if requested in SORT_OPTIONS else None
+
+
+def _normalize_search_query(query: str | None) -> str:
+    return " ".join((query or "").strip().split())
+
+
+def _item_matches_filters(item: ScanItemResult, active_provider: str | None, search_query: str = "") -> bool:
+    return _item_matches_provider(item.providers, active_provider) and _item_matches_title(item.title, search_query)
+
+
 def _item_matches_provider(providers: list[str], active_provider: str | None) -> bool:
     if active_provider is None:
         return True
     return active_provider in providers
+
+
+def _item_matches_title(title: str, search_query: str = "") -> bool:
+    if not search_query:
+        return True
+    return search_query.casefold() in title.casefold()
 
 
 def _last_scan_text(result: ScanRunResult | None) -> str:
