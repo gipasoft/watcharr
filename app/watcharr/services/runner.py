@@ -4,7 +4,7 @@ from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from time import perf_counter
 from typing import Callable
-from urllib.parse import urljoin
+from urllib.parse import quote, urljoin
 
 from watcharr.clients.arr_client import ArrClient, ArrItem
 from watcharr.clients.tmdb_client import TmdbClient
@@ -228,7 +228,7 @@ class ScanRunner:
         tagger: TaggingService,
         item: ArrItem,
     ) -> ScanItemResult:
-        arr_url = self._arr_detail_url(client.kind, item.id)
+        arr_url = self._arr_detail_url(client.kind, item)
         poster_url = self._poster_url(client.kind, item)
 
         try:
@@ -343,7 +343,7 @@ class ScanRunner:
             return "series"
         return kind
 
-    def _arr_detail_url(self, kind: str, item_id: int) -> str | None:
+    def _arr_detail_url(self, kind: str, item: ArrItem) -> str | None:
         if kind == "radarr":
             base_url = self.settings.radarr_url
             path = "movie"
@@ -355,7 +355,28 @@ class ScanRunner:
 
         if not base_url:
             return None
-        return f"{base_url.rstrip('/')}/{path}/{item_id}"
+
+        route_segment = self._arr_route_segment(kind, item)
+        return f"{base_url.rstrip('/')}/{path}/{quote(route_segment, safe='')}"
+
+    @staticmethod
+    def _arr_route_segment(kind: str, item: ArrItem) -> str:
+        raw = item.raw or {}
+        if kind == "radarr":
+            return ScanRunner._first_route_value(raw.get("tmdbId"), item.tmdb_id, raw.get("titleSlug"), item.id)
+        if kind == "sonarr":
+            return ScanRunner._first_route_value(raw.get("titleSlug"), raw.get("tvdbId"), item.tvdb_id, item.id)
+        return str(item.id)
+
+    @staticmethod
+    def _first_route_value(*values) -> str:
+        for value in values:
+            if value is None:
+                continue
+            text = str(value).strip()
+            if text:
+                return text
+        return ""
 
     def _poster_url(self, kind: str, item: ArrItem) -> str | None:
         raw = item.raw or {}

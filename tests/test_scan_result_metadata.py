@@ -10,11 +10,31 @@ from watcharr.services.runner import ScanRunner
 
 
 class ScanResultMetadataTest(unittest.TestCase):
-    def test_arr_detail_urls_use_internal_arr_ids(self):
+    def test_radarr_detail_url_uses_tmdb_id_for_web_route(self):
         runner = _runner()
+        item = ArrItem(
+            id=1406,
+            title="MIA",
+            tmdb_id=915655,
+            tvdb_id=None,
+            tags=[],
+            raw={"tmdbId": 915655},
+        )
 
-        self.assertEqual(runner._arr_detail_url("radarr", 123), "https://radarr.local/movie/123")
-        self.assertEqual(runner._arr_detail_url("sonarr", 456), "https://sonarr.local/series/456")
+        self.assertEqual(runner._arr_detail_url("radarr", item), "https://radarr.local/movie/915655")
+
+    def test_sonarr_detail_url_uses_title_slug_for_web_route(self):
+        runner = _runner()
+        item = ArrItem(
+            id=456,
+            title="Series",
+            tmdb_id=111,
+            tvdb_id=222,
+            tags=[],
+            raw={"titleSlug": "series-2024"},
+        )
+
+        self.assertEqual(runner._arr_detail_url("sonarr", item), "https://sonarr.local/series/series-2024")
 
     def test_poster_url_prefers_tmdb_metadata_from_arr_images(self):
         runner = _runner()
